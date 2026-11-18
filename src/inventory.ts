@@ -122,7 +122,7 @@ export async function adjustStock(cc: CommandCtx, p: {
   } else {
     const r = await cc.client.query(
       `UPDATE stock_balances SET on_hand = on_hand + $1
-        WHERE branch_id=$2 AND item_id=$3 AND COALESCE(batch_id,'${ZERO}')=COALESCE($4,'${ZERO}') AND stock_status='sellable'
+        WHERE branch_id=$2 AND item_id=$3 AND COALESCE(batch_id,'${ZERO}')=COALESCE($4::uuid,'${ZERO}') AND stock_status='sellable'
           AND on_hand - reserved >= $5`, [p.delta, p.branchId, p.itemId, p.batchId ?? null, -p.delta]);
     if (r.rowCount === 0) throw insufficientStock('adjustment exceeds available stock');
   }
@@ -166,7 +166,7 @@ export async function releaseReservations(cc: CommandCtx, lineId: string) {
   for (const r of rs.rows) {
     await cc.client.query(
       `UPDATE stock_balances SET reserved = reserved - $1
-        WHERE branch_id=$2 AND item_id=$3 AND COALESCE(batch_id,'${ZERO}')=COALESCE($4,'${ZERO}') AND stock_status='sellable'`,
+        WHERE branch_id=$2 AND item_id=$3 AND COALESCE(batch_id,'${ZERO}')=COALESCE($4::uuid,'${ZERO}') AND stock_status='sellable'`,
       [r.qty, r.branch_id, r.item_id, r.batch_id]);
     await cc.client.query(`UPDATE stock_reservations SET status='released' WHERE id=$1`, [r.id]);
     if (r.serial_id) await cc.client.query(`UPDATE serials SET status='in_stock' WHERE id=$1`, [r.serial_id]);
@@ -183,7 +183,7 @@ export async function consumeReservations(cc: CommandCtx, p: { lineId: string; t
     const policy = await currentPolicyVersion(cc.client, r.item_id);
     const bal = await cc.client.query(
       `SELECT id, avg_cost FROM stock_balances
-        WHERE branch_id=$1 AND item_id=$2 AND COALESCE(batch_id,'${ZERO}')=COALESCE($3,'${ZERO}') AND stock_status='sellable' FOR UPDATE`,
+        WHERE branch_id=$1 AND item_id=$2 AND COALESCE(batch_id,'${ZERO}')=COALESCE($3::uuid,'${ZERO}') AND stock_status='sellable' FOR UPDATE`,
       [r.branch_id, r.item_id, r.batch_id]);
     const wavg = policy.valuation_method === 'weighted_average' ? await weightedAvg(cc.client, r.branch_id, r.item_id) : 0;
     const unit = policy.valuation_method === 'batch_actual' ? Number(bal.rows[0].avg_cost) : wavg;
@@ -250,7 +250,7 @@ export async function reverseLineMovements(cc: CommandCtx, p: { lineId: string; 
         qty: q, unitCost: cost, type: 'reversal', reverses: m.id, reason: p.reason, sourceType: 'order_line', sourceId: p.lineId });
       await cc.client.query(
         `UPDATE stock_balances SET on_hand = on_hand - $1
-          WHERE branch_id=$2 AND item_id=$3 AND COALESCE(batch_id,'${ZERO}')=COALESCE($4,'${ZERO}') AND stock_status='damaged'`,
+          WHERE branch_id=$2 AND item_id=$3 AND COALESCE(batch_id,'${ZERO}')=COALESCE($4::uuid,'${ZERO}') AND stock_status='damaged'`,
         [q, m.branch_id, m.item_id, m.batch_id]);
       await recordMovement(cc, { branchId: m.branch_id, itemId: m.item_id, batchId: m.batch_id, status: 'damaged',
         qty: -q, unitCost: cost, type: 'waste', reason: p.reason, sourceType: 'order_line', sourceId: p.lineId });
