@@ -108,7 +108,7 @@ Node.js 22 + TypeScript، PostgreSQL 16، Redis + عامل مهام (مرحلة 
 `items`, `item_variants`, `uom`, `uom_conversions`, `categories`, `price_lists`, `price_list_items`, `barcodes`, `recipes` (**بنسخ**: `recipe_versions`, `recipe_lines`)، `batches`, `serials`.
 
 ### 4.3 الخدمات في MVP
-سطر فاتورة بسعر، مع **وصفة خدمة اختيارية** تستهلك مواد (فحم، توابل) بنمط `backflush`. بلا أوامر عمل.
+سطر فاتورة بسعر. الخدمة **الصرفة** `kind=service` لا تمس المخزون أبداً (`fulfillment=none`، يفرضه قيد في القاعدة). أما الخدمة التي **تستهلك مواد** (شواء بالفحم، تركيب بقطع صغيرة) فتُمثَّل `kind=composite` + `fulfillment=backflush` بوصفة (مثبَّت بالتنفيذ والاختبار T21). بلا أوامر عمل في MVP.
 
 ### 4.4 أوامر العمل (مثبّتة علاقاتها الآن، واجهاتها مؤجلة)
 السيناريو: مضخة مياه + تركيب + فني + قطع إضافية + دفعتان + ضمان.
