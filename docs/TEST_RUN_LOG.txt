@@ -1,0 +1,50 @@
+ RUN  v5.1.1 /home/user/platform
+stdout | test/properties.test.ts > ledger invariants under random mixed operations (T18) > T18 seed=1: balances always equal the ledger, never negative, reserved never exceeds on_hand, mass conserved
+  seed 1: 50 ok / 36 refused
+ ✓ test/properties.test.ts > ledger invariants under random mixed operations (T18) > T18 seed=1: balances always equal the ledger, never negative, reserved never exceeds on_hand, mass conserved 537ms
+stdout | test/properties.test.ts > ledger invariants under random mixed operations (T18) > T18 seed=7: balances always equal the ledger, never negative, reserved never exceeds on_hand, mass conserved
+  seed 7: 66 ok / 34 refused
+ ✓ test/properties.test.ts > ledger invariants under random mixed operations (T18) > T18 seed=7: balances always equal the ledger, never negative, reserved never exceeds on_hand, mass conserved 456ms
+stdout | test/properties.test.ts > ledger invariants under random mixed operations (T18) > T18 seed=42: balances always equal the ledger, never negative, reserved never exceeds on_hand, mass conserved
+  seed 42: 50 ok / 42 refused
+ ✓ test/properties.test.ts > ledger invariants under random mixed operations (T18) > T18 seed=42: balances always equal the ledger, never negative, reserved never exceeds on_hand, mass conserved 367ms
+ ✓ test/sales.test.ts > sale of meat with a grilling service (T1) > T1: 1.47kg kafta @130 + grilling @20/kg = 220.50; the meat leaves stock ONCE; weighing alone never touches the ledger 121ms
+ ✓ test/sales.test.ts > sale of meat with a grilling service (T1) > invalid transitions are refused (confirm twice, weigh after commit) 45ms
+ ✓ test/sales.test.ts > cancellation and correction (T3–T6) > T3/T4: cancelling before commit (even after weighing) only releases the reservation — no ledger movement 68ms
+ ✓ test/sales.test.ts > cancellation and correction (T3–T6) > T5: cancelling a paid, committed line: return to stock needs approval; otherwise it is written off; invoice voided and refunded 76ms
+ ✓ test/sales.test.ts > cancellation and correction (T3–T6) > T6: cancelling while it is already on the grill => write-off (never returned to stock) 59ms
+ ✓ test/sales.test.ts > mixed activities in one order (T21) > T21: raw meat + grilling service with charcoal + plated meals — each component leaves stock exactly once 88ms
+ ✓ test/sales.test.ts > mixed activities in one order (T21) > a backflush meal fails atomically if a component is missing 37ms
+ ✓ test/sales.test.ts > approvals (T15, T16) > T15: a discount above the limit blocks payment until a DIFFERENT authorised user approves it 69ms
+ ✓ test/sales.test.ts > approvals (T15, T16) > T15b: a manager who requested a discount cannot approve it themselves when the team has other members 49ms
+ ✓ test/sales.test.ts > approvals (T15, T16) > T16: a sole owner may self-approve only with step-up + a written reason; it is flagged and audited 38ms
+ ✓ test/sales.test.ts > partial payments and simple credit (T22) > T22: partial payment, later collection, balance and allocations always agree; limits enforced 72ms
+ ✓ test/sales.test.ts > equipment with serial numbers + installation service (T20) > T20: a serial-numbered pump is sold once; the installation service touches no stock; warranty is recorded 43ms
+ ✓ test/ledger.test.ts > availability: on_hand vs reserved vs available (T7) > T7: 10kg on hand, 7kg reserved by a confirmed order => a 5kg order is refused, 3kg is allowed 103ms
+ ✓ test/ledger.test.ts > availability: on_hand vs reserved vs available (T7) > damaged stock is never available for sale 34ms
+ ✓ test/ledger.test.ts > concurrent selling (T8) > T8: two registers race for the last 2kg — exactly one wins, stock never goes negative 155ms
+ ✓ test/ledger.test.ts > concurrent selling (T8) > T8b: 8 concurrent 1kg buyers on 3kg => exactly 3 succeed, 5 refused 70ms
+ ✓ test/ledger.test.ts > idempotent business commands (T12, T13) > T12: retrying the same multi-movement command returns the saved result and duplicates nothing 63ms
+ ✓ test/ledger.test.ts > idempotent business commands (T12, T13) > T13: reusing a key with a different request is rejected with a conflict 45ms
+ ✓ test/ledger.test.ts > atomicity (T14) > T14: failure injected at "after_commit_line" rolls back invoice, payment, ledger, reservations and the command record 38ms
+ ✓ test/ledger.test.ts > atomicity (T14) > T14: failure injected at "after_invoice" rolls back invoice, payment, ledger, reservations and the command record 38ms
+ ✓ test/ledger.test.ts > atomicity (T14) > T14b: second line short of stock after the first was reserved => nothing persists 31ms
+ ✓ test/production.test.ts > transform with loss (T2) > T2: 5kg beef -> 4.6kg kafta + 0.4kg waste: raw is deducted ONCE (5kg), waste is a document line 70ms
+ ✓ test/production.test.ts > transform with loss (T2) > rejects an unbalanced order (inputs must equal outputs + by-products + waste) and persists nothing 25ms
+ ✓ test/production.test.ts > transform with loss (T2) > cannot consume more than is available; failure leaves stock untouched 21ms
+ ✓ test/production.test.ts > transform with loss (T2) > by-products with stock (bones for broth) are outputs, not waste; relative-value allocation splits cost by value 33ms
+ ✓ test/production.test.ts > batches, expiry, FEFO/FIFO (T19) > T19: FEFO consumes the nearest expiry first; expired batches are never sold; batch required 32ms
+ ✓ test/production.test.ts > batches, expiry, FEFO/FIFO (T19) > FIFO policy picks the oldest received batch even when a newer one expires sooner 50ms
+ ✓ test/production.test.ts > cost policy versions are not retroactive (T23) > T23: changing the policy affects future movements only; old movements keep version and cost 23ms
+ ✓ test/isolation.test.ts > tenant isolation (RLS) — T9, T10, T11 > T9: tenant B sees/writes nothing of tenant A, even on direct SQL with the runtime role 86ms
+ ✓ test/isolation.test.ts > tenant isolation (RLS) — T9, T10, T11 > T10: runtime role cannot bypass RLS, owns nothing, cannot create tenants; all tenant tables are FORCE-RLS 10ms
+ ✓ test/isolation.test.ts > tenant isolation (RLS) — T9, T10, T11 > T11: a user in two tenants sees each tenant only through its own context 36ms
+ ✓ test/isolation.test.ts > append-only ledger — T17 > runtime cannot UPDATE/DELETE stock_movements or audit_log; trigger blocks even the owner 28ms
+ ✓ test/isolation.test.ts > plan quotas — T24 and item model constraints > T24: plan limits are enforced in the database 21ms
+ ✓ test/isolation.test.ts > plan quotas — T24 and item model constraints > item capability rules are enforced (a service never holds stock; serial implies tracked quantity) 16ms
+ ✓ test/modules.test.ts > module boundaries > every source module is declared and imports only what the architecture allows 3ms
+ ✓ test/modules.test.ts > module boundaries > inventory never depends on sales/payments/production; there are no import cycles 2ms
+ Test Files  6 passed (6)
+      Tests  39 passed (39)
+   Start at  23:05:53
+   Duration  4.04s (tests 94%, import 4%, transform 1%, worker 1%)
