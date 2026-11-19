@@ -11,7 +11,7 @@ import { platformCreateShop } from './tenancy.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
 
-export interface AppDeps { runtime: pg.Pool; platform: pg.Pool; production: boolean; trustProxy?: boolean; version?: string }
+export interface AppDeps { runtime: pg.Pool; platform: pg.Pool; production: boolean; trustProxy?: boolean; version?: string; expectedMigrations?: string[] }
 
 interface Rc {
   req: http.IncomingMessage; body: any; query: URLSearchParams; params: Record<string, string>;
@@ -297,8 +297,13 @@ export function createApp(d: AppDeps): http.RequestListener {
               AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped)
               AND NOT (c.relrowsecurity AND c.relforcerowsecurity)`)).rows[0].n;
         const migrations = (await d.runtime.query(`SELECT current_setting('server_version') AS v, (SELECT count(*)::int FROM pg_tables WHERE schemaname='public' AND tablename='schema_migrations') AS m`)).rows[0];
-        const ok = !(role.rolsuper || role.rolbypassrls) && unprotected === 0 && migrations.m === 1;
-        return send(res, ok ? 200 : 503, { status: ok ? 'ready' : 'not_ready', rlsBypassPossible: Boolean(role.rolsuper || role.rolbypassrls), unprotectedTables: unprotected, migrated: migrations.m === 1, postgres: migrations.v, version: d.version ?? 'dev' });
+        let pending: number | null = null;
+        if (migrations.m === 1 && d.expectedMigrations) {
+          const applied = new Set((await d.runtime.query('SELECT name FROM schema_migrations')).rows.map((r) => r.name));
+          pending = d.expectedMigrations.filter((n) => !applied.has(n)).length;
+        }
+        const ok = !(role.rolsuper || role.rolbypassrls) && unprotected === 0 && migrations.m === 1 && (pending ?? 0) === 0;
+        return send(res, ok ? 200 : 503, { status: ok ? 'ready' : 'not_ready', rlsBypassPossible: Boolean(role.rolsuper || role.rolbypassrls), unprotectedTables: unprotected, migrated: migrations.m === 1, pendingMigrations: pending, postgres: migrations.v, version: d.version ?? 'dev' });
       }
       let matched: { r: Route; params: Record<string, string> } | null = null;
       let pathExists = false;

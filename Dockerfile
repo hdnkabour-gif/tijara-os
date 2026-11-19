@@ -15,5 +15,6 @@ COPY package.json ./
 COPY db ./db
 USER node
 EXPOSE 3000
-# migrations run before the server starts; a failed migration aborts the deploy
-CMD ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
+# The runtime image NEVER runs migrations and never holds admin credentials.
+# Migrations are a separate privileged service (railway.migrate.json -> node dist/migrate.js).
+CMD ["node", "dist/server.js"]

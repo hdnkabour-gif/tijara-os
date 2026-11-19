@@ -1,0 +1,7 @@
+# Scheduled backup job image: PostgreSQL 18 client tools (must match the server major version) + AWS CLI for S3-compatible storage.
+FROM postgres:18
+RUN apt-get update && apt-get install -y --no-install-recommends awscli openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY scripts/backup-job.sh /usr/local/bin/backup-job.sh
+RUN chmod +x /usr/local/bin/backup-job.sh
+USER postgres
+CMD ["/usr/local/bin/backup-job.sh"]

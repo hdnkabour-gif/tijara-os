@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { bootstrapAdmin } from './bootstrap.js';
 
 /**
  * Production-safe migration runner.
@@ -66,6 +67,7 @@ async function main() {
       throw new Error(`security posture check failed: ${JSON.stringify({ roles: roles.length, badRole, unprotected, ownedByRuntime })}`);
     }
     console.log('security posture OK: 3 non-bypass roles, all tenant tables FORCE RLS');
+    if (process.env.BOOTSTRAP_ADMIN_EMAIL) await bootstrapAdmin(c, process.env.BOOTSTRAP_ADMIN_EMAIL);
   } catch (e) {
     await c.query('ROLLBACK').catch(() => {});
     throw e;

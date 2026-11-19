@@ -17,3 +17,8 @@ if ! su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='tijara
 fi
 su postgres -c "psql -q -d tijara_test -c 'ALTER SCHEMA public OWNER TO app_owner'"
 echo "db ready"
+# dedicated backup role (BYPASSRLS so pg_dump can read every tenant). DEV ONLY password.
+su postgres -c "psql -q" <<'SQL'
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='backup_admin') THEN
+  CREATE ROLE backup_admin LOGIN PASSWORD 'backup_dev_pw' SUPERUSER; END IF; END $$;
+SQL

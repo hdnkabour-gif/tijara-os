@@ -6,7 +6,7 @@ const ALLOWED: Record<string, string[]> = {
   errors: [], db: [], audit: [],
   auth: [], http: [],
   api: ['auth', 'audit', 'commands', 'catalog', 'db', 'errors', 'inventory', 'tenancy', 'sales', 'http'],
-  server: ['api', 'db'], migrate: [],           // entrypoints: no business-module dependencies
+  server: ['api', 'db'], migrate: ['bootstrap'], bootstrap: [],           // entrypoints: no business-module dependencies
   commands: ['db', 'errors'],
   tenancy: ['db'],
   catalog: ['errors'],
