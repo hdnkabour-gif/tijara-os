@@ -1,14 +1,16 @@
 import type pg from 'pg';
 import { withTenant } from './db.js';
 
+const CAT = ['catalog.view', 'catalog.manage', 'stock.view', 'stock.receive', 'stock.adjust', 'sale.view', 'sale.create', 'sale.discount',
+  'sale.price_override', 'sale.void', 'customers.view', 'customers.manage', 'branches.view', 'report.view'];
 export const DEFAULT_ROLES: Record<string, string[]> = {
-  owner: ['sale.create', 'sale.discount', 'sale.void', 'stock.adjust', 'approvals.decide', 'report.view_profit', 'users.manage'],
-  manager: ['sale.create', 'sale.discount', 'sale.void', 'stock.adjust', 'approvals.decide'],
-  cashier: ['sale.create'],
+  owner: [...CAT, 'approvals.decide', 'report.view_profit', 'users.manage', 'branches.manage', 'audit.view'],
+  manager: [...CAT, 'approvals.decide', 'audit.view'],
+  cashier: ['catalog.view', 'stock.view', 'sale.view', 'sale.create', 'customers.view', 'branches.view'],
 };
 
-export async function createUser(platform: pg.Pool, email: string, name: string): Promise<string> {
-  const r = await platform.query(`INSERT INTO users (email, name) VALUES ($1,$2) RETURNING id`, [email, name]);
+export async function createUser(platform: pg.Pool, email: string, name: string, passwordHash: string | null = null): Promise<string> {
+  const r = await platform.query(`INSERT INTO users (email, name, password_hash) VALUES ($1,$2,$3) RETURNING id`, [email, name, passwordHash]);
   return r.rows[0].id;
 }
 
@@ -45,4 +47,17 @@ export async function hasPermission(c: pg.PoolClient, tenantId: string, userId: 
        ON rp.tenant_id = m.tenant_id AND rp.role_id = m.role_id
       WHERE m.tenant_id=$1 AND m.user_id=$2 AND m.active AND rp.permission=$3`, [tenantId, userId, perm]);
   return (r.rowCount ?? 0) > 0;
+}
+
+/** Platform action: a new shop with its first owner, audited in platform_audit. */
+export async function platformCreateShop(
+  platform: pg.Pool, runtime: pg.Pool, actorUserId: string,
+  o: { name: string; slug: string; plan: string; owner: { email: string; name: string; passwordHash: string } },
+) {
+  const t = await provisionTenant(platform, runtime, { name: o.name, slug: o.slug, plan: o.plan });
+  const ownerId = await createUser(platform, o.owner.email, o.owner.name, o.owner.passwordHash);
+  await addMember(runtime, t.tenantId, ownerId, t.roles.owner);
+  await platform.query(`INSERT INTO platform_audit (actor_user_id, action, meta) VALUES ($1,'tenant.created',$2)`,
+    [actorUserId, JSON.stringify({ tenantId: t.tenantId, slug: o.slug, plan: o.plan })]);
+  return { ...t, ownerId };
 }
