@@ -39,6 +39,8 @@ async function uiLogin(page: P, email: string, password = PW) {
   await page.click('button[type=submit]');
 }
 const text = (page: P, sel: string) => page.locator(sel).first().innerText();
+// the word "false"/"undefined"/"null" printed in the page means a rendering bug leaked a JS value
+const noLeaks = async (page: P) => expect(await page.evaluate(() => document.body.innerText)).not.toMatch(/\b(false|undefined|null|NaN|\[object)\b/);
 const hasMoney = (s: string, v: string) => new RegExp(v.replace('.', '[.,]')).test(s.replace(/\s/g, ''));
 
 describe('web UI in a real browser', () => {
@@ -62,6 +64,7 @@ describe('web UI in a real browser', () => {
     await page.waitForSelector('#tile-sales');
     await page.locator('nav.nav').getByRole('link', { name: 'Produits & services' }).click();
     await page.waitForSelector('td:has-text("BUT-BOEUF")');
+    await noLeaks(page);
     expect(await page.locator('.badge.sample').count()).toBeGreaterThan(0);
     expect(await page.locator('td:has-text("EQP-POMPE")').count()).toBe(0);              // other activities' items are not there
 
@@ -81,6 +84,7 @@ describe('web UI in a real browser', () => {
     await page.locator('[data-line=GRL-CUISSON] input').fill('1.47'); await page.locator('[data-line=GRL-CUISSON] input').press('Tab');
     await page.waitForFunction(() => document.querySelector('#cart-total')?.textContent?.replace(/\s/g, '').match(/205[.,]80/));
     expect(hasMoney(await text(page, '#cart-total'), '205.80')).toBe(true);             // 1.47*120 + 1.47*20
+    await noLeaks(page);
     await page.click('#pay-cash');
     await page.waitForSelector('#receipt');
     expect(hasMoney(await text(page, '#receipt-total'), '205.80')).toBe(true);
@@ -134,6 +138,7 @@ describe('web UI in a real browser', () => {
     await page.tap('button.prod[data-sku=EPI-HUILE]'); await page.tap('button.prod[data-sku=EPI-HUILE]');   // 2 x 18
     await page.waitForFunction(() => /36[.,]00/.test(document.querySelector('#cart-total')?.textContent?.replace(/\s/g, '') ?? ''));
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await noLeaks(page);
     const pay = await page.locator('#pay-cash').boundingBox();
     expect(pay.height).toBeGreaterThanOrEqual(44);
     await page.tap('#pay-cash');

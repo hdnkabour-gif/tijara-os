@@ -69,3 +69,5 @@ export function money(v) {
 }
 export const qtyFmt = (v) => new Intl.NumberFormat(lang === 'ar' ? 'ar-MA-u-nu-latn' : 'fr-MA', { maximumFractionDigits: 3 }).format(Number(v) || 0);
 export const dateFmt = (v) => new Date(v).toLocaleString(lang === 'ar' ? 'ar-MA-u-nu-latn' : 'fr-MA', { dateStyle: 'short', timeStyle: 'short' });
+
+export const uom = (u) => (lang === 'ar' ? ({ kg: 'كلغ', g: 'غ', l: 'لتر', unit: 'قطعة' }[u] ?? u) : (u === 'unit' ? 'pièce' : u));

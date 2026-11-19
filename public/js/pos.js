@@ -1,5 +1,5 @@
-import { api, errorBox, field, friendly, h, modal, newKey, num, toast } from './lib.js';
-import { money, qtyFmt, t } from './i18n.js';
+import { api, errorBox, field, friendly, h, modal, newKey, num, toast, put } from './lib.js';
+import { money, qtyFmt, t, uom } from './i18n.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 // Exact money maths: integer arithmetic that mirrors PostgreSQL numeric round(qty*price, 2) (half up), so the amount we send always equals the invoice.
@@ -27,7 +27,7 @@ export async function posView(S) {
     catalogEl.replaceChildren(...sellable
       .filter((i) => (filter === 'all' || (filter === 'service' ? i.kind === 'service' : i.kind !== 'service')) && (!q || `${i.name} ${i.sku}`.toLowerCase().includes(q.toLowerCase())))
       .map((i) => h('button', { type: 'button', class: 'prod' + (i.kind === 'service' ? ' service' : ''), 'data-sku': i.sku, onclick: () => pick(i) },
-        h('span', { class: 'n' }, i.name), h('span', { class: 'p' }, `${money(i.price)}${isWeighed(i) ? ' / ' + i.base_uom : ''}`))));
+        h('span', { class: 'n' }, i.name), h('span', { class: 'p', dir: 'auto' }, `${money(i.price)}${isWeighed(i) ? ' / ' + uom(i.base_uom) : ''}`))));
   }
 
   function pick(item) {
@@ -65,16 +65,16 @@ export async function posView(S) {
     cartEl.replaceChildren(h('h2', null, t('cart')));
     if (finished) result = finished;
     if (result) {
-      cartEl.append(h('div', { id: 'receipt' }, h('p', { class: 'badge ok' }, t('saleDone')),
+      put(cartEl, h('div', { id: 'receipt' }, h('p', { class: 'badge ok' }, t('saleDone')),
         h('p', null, `${t('invoice')} ${result.invoiceNo}`), h('div', { class: 'total', id: 'receipt-total' }, money(result.total)),
         result.due > 0 && h('p', { class: 'note' }, `${t('due')}: ${money(result.due)}`),
         h('button', { class: 'btn primary', id: 'new-sale', type: 'button', onclick: () => { finished = null; touch(); drawCart(); } }, t('newSale'))));
       return;
     }
-    if (cart.length === 0) { cartEl.append(h('p', { class: 'muted' }, t('cartEmpty'))); return; }
+    if (cart.length === 0) { put(cartEl, h('p', { class: 'muted' }, t('cartEmpty'))); return; }
     cart.forEach((l, idx) => {
       const input = h('input', { 'aria-label': t('qty'), inputmode: 'decimal', value: String(l.qty), disabled: Boolean(l.serialNo), onchange: (e) => { const v = num(e.target.value); if (v > 0) setQty(l, v); else drawCart(); } });
-      cartEl.append(h('div', { class: 'cartline', 'data-line': l.item.sku },
+      put(cartEl, h('div', { class: 'cartline', 'data-line': l.item.sku },
         h('div', null, h('strong', null, l.item.name), l.serialNo && h('div', { class: 'muted' }, `${t('serialNo')}: ${l.serialNo}`), h('div', { class: 'muted' }, `${money(l.item.price)} × ${qtyFmt(l.qty)}`)),
         h('div', { class: 'num' }, h('strong', null, money(lineMoney(l)))),
         h('div', { class: 'qty' },
@@ -97,7 +97,7 @@ export async function posView(S) {
       } catch (ex) { err.replaceChildren(errorBox(friendly(ex))); } finally { busy = false; }
     };
     const T = total();
-    cartEl.append(h('div', { class: 'total', id: 'cart-total' }, money(T)),
+    put(cartEl, h('div', { class: 'total', id: 'cart-total' }, money(T)),
       S.branches.length > 1 && h('select', { id: 'pos-branch', 'aria-label': t('branch'), onchange: (e) => { branchId = e.target.value; touch(); } }, S.branches.map((b) => h('option', { value: b.id, selected: b.id === branchId }, b.name))),
       customers.length > 0 && [h('label', { for: 'pos-customer' }, t('customer')), sel], err,
       h('div', { class: 'paygrid' },
@@ -110,7 +110,7 @@ export async function posView(S) {
 
   const search = h('input', { id: 'pos-search', type: 'search', placeholder: t('pos_search'), 'aria-label': t('pos_search'), oninput: (e) => { q = e.target.value; drawCatalog(); } });
   const chip = (id, label) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter === id), onclick: (e) => { filter = id; e.target.parentElement.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', 'false')); e.target.setAttribute('aria-pressed', 'true'); drawCatalog(); } }, label);
-  root.append(h('div', { class: 'pos' }, h('div', null, search, h('div', { class: 'chips' }, chip('all', t('all')), chip('product', t('onlyProducts')), chip('service', t('onlyServices'))), catalogEl), cartEl));
+  put(root, h('div', { class: 'pos' }, h('div', null, search, h('div', { class: 'chips' }, chip('all', t('all')), chip('product', t('onlyProducts')), chip('service', t('onlyServices'))), catalogEl), cartEl));
   drawCatalog(); drawCart();
   return root;
 }

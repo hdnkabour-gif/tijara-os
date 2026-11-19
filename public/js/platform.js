@@ -1,4 +1,4 @@
-import { api, errorBox, field, friendly, h, modal, toast } from './lib.js';
+import { api, errorBox, field, friendly, h, modal, toast, put } from './lib.js';
 import { dateFmt, getLang, t } from './i18n.js';
 
 export async function platformView() {
@@ -8,7 +8,7 @@ export async function platformView() {
     h('td', null, x.name), h('td', null, x.slug), h('td', null, x.plan_id),
     h('td', null, (x.activities ?? []).map((a) => h('span', { class: 'badge' }, t(`act_${a}`)))),
     h('td', { class: 'num' }, String(x.users)), h('td', { class: 'num' }, String(x.items)), h('td', null, dateFmt(x.created_at))));
-  wrap.append(
+  put(wrap, 
     h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('shops')), h('button', { class: 'btn primary', type: 'button', onclick: () => openCreate(activities, () => platformView().then((v) => wrap.replaceWith(v))) }, `+ ${t('newShop')}`)),
     h('div', { class: 'card tablewrap' }, h('table', null,
       h('thead', null, h('tr', null, [t('name'), t('slug'), t('plan'), t('activities'), t('usersCount'), t('itemsCount'), t('date')].map((x) => h('th', null, x)))),

@@ -1,5 +1,5 @@
-import { api, errorBox, field, friendly, h, modal, newKey, num, toast } from './lib.js';
-import { dateFmt, money, qtyFmt, t } from './i18n.js';
+import { api, errorBox, field, friendly, h, modal, newKey, num, toast, put } from './lib.js';
+import { dateFmt, money, qtyFmt, t, uom } from './i18n.js';
 
 const can = (S, p) => S.me.permissions.includes(p);
 const typeOf = (i) => (i.kind === 'service' ? 'type_service' : i.serial_tracking ? 'type_serial' : i.batch_tracking === 'required' ? 'type_batch' : i.base_uom === 'kg' ? 'type_weighed' : 'type_unit');
@@ -23,7 +23,7 @@ export async function dashboardView(S) {
     const { stock } = await api('GET', `/stock?branchId=${S.branches[0].id}`);
     const low = [...stock].sort((a, b) => Number(a.available) - Number(b.available)).slice(0, 5);
     wrap.appendChild(h('div', { class: 'card' }, h('h2', null, t('lowStock')), h('div', { class: 'tablewrap' }, h('table', null,
-      h('tbody', null, low.map((r) => h('tr', null, h('td', null, r.name), h('td', { class: 'num' }, `${qtyFmt(r.available)} ${r.base_uom}`))))))));
+      h('tbody', null, low.map((r) => h('tr', null, h('td', null, r.name), h('td', { class: 'num' }, `${qtyFmt(r.available)} ${uom(r.base_uom)}`))))))));
   }
   return wrap;
 }
@@ -42,7 +42,7 @@ export async function itemsView(S) {
   const hasSample = items.some((i) => i.attributes?.sample);
   const rows = items.map((i) => h('tr', null, h('td', null, i.sku), h('td', null, i.name, i.attributes?.sample && h('span', { class: 'badge sample' }, ` ${t('sample')}`)),
     h('td', null, t(typeOf(i))), h('td', { class: 'num' }, money(i.price))));
-  wrap.append(h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_items')),
+  put(wrap, h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_items')),
     can(S, 'catalog.manage') && h('button', { class: 'btn primary', id: 'new-item', type: 'button', onclick: () => openItem(() => itemsView(S).then((v) => wrap.replaceWith(v))) }, `+ ${t('newItem')}`)),
     hasSample && h('p', { class: 'note' }, t('sampleNote')),
     h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('sku'), t('name'), t('kind'), t('price')].map((x) => h('th', null, x)))), h('tbody', null, rows))));
@@ -71,9 +71,9 @@ export async function stockView(S) {
     body.replaceChildren(h('div', { class: 'card tablewrap' }, h('table', null,
       h('thead', null, h('tr', null, [t('sku'), t('name'), t('stockOnHand'), t('reserved'), t('available')].map((x) => h('th', null, x)))),
       h('tbody', null, stock.map((r) => h('tr', null, h('td', null, r.sku), h('td', null, r.name),
-        h('td', { class: 'num' }, `${qtyFmt(r.on_hand)} ${r.base_uom}`), h('td', { class: 'num' }, qtyFmt(r.reserved)), h('td', { class: 'num' }, qtyFmt(r.available))))))));
+        h('td', { class: 'num' }, `${qtyFmt(r.on_hand)} ${uom(r.base_uom)}`), h('td', { class: 'num' }, qtyFmt(r.reserved)), h('td', { class: 'num' }, qtyFmt(r.available))))))));
   }
-  wrap.append(h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_stock')),
+  put(wrap, h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_stock')),
     S.branches.length > 1 && branchSelect(S, 'stock-branch', branchId, (v) => { branchId = v; load(); }),
     can(S, 'stock.receive') && h('button', { class: 'btn primary', id: 'receive-btn', type: 'button', onclick: () => openReceive(S, () => branchId, load) }, `+ ${t('receive')}`)), body);
   await load();
@@ -91,8 +91,8 @@ async function openReceive(S, getBranch, done) {
   const refresh = () => {
     const it = tracked.find((i) => i.id === sel.value);
     extra.replaceChildren();
-    if (it?.batch_tracking !== 'none') extra.append(...field(t('batchNo'), batch, 'r-batch'), ...field(t('expiresAt'), exp, 'r-exp'));
-    if (it?.serial_tracking) extra.append(...field(t('serials'), serials, 'r-serials'), ...field(t('warrantyUntil'), warranty, 'r-war'));
+    if (it?.batch_tracking !== 'none') put(extra, ...field(t('batchNo'), batch, 'r-batch'), ...field(t('expiresAt'), exp, 'r-exp'));
+    if (it?.serial_tracking) put(extra, ...field(t('serials'), serials, 'r-serials'), ...field(t('warrantyUntil'), warranty, 'r-war'));
   };
   sel.addEventListener('change', refresh); refresh();
   const m = modal(t('receive'), h('form', { onsubmit: async (e) => {
@@ -113,7 +113,7 @@ async function openReceive(S, getBranch, done) {
 // ───────────── customers ─────────────
 export async function customersView(S) {
   const { customers } = await api('GET', '/customers'); const wrap = h('div');
-  wrap.append(h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_customers')),
+  put(wrap, h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_customers')),
     can(S, 'customers.manage') && h('button', { class: 'btn primary', type: 'button', onclick: () => openCustomer(() => customersView(S).then((v) => wrap.replaceWith(v))) }, `+ ${t('add')}`)),
     h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('name'), t('phone'), t('creditLimit'), t('balance')].map((x) => h('th', null, x)))),
       h('tbody', null, customers.map((c) => h('tr', null, h('td', null, c.name), h('td', null, c.phone ?? ''), h('td', { class: 'num' }, money(c.credit_limit)), h('td', { class: 'num' }, money(c.balance))))))));
@@ -135,7 +135,7 @@ export async function invoicesView(S) {
   const rows = invoices.map((i) => h('tr', null, h('td', null, i.invoice_no), h('td', null, dateFmt(i.created_at)), h('td', { class: 'num' }, money(i.total)), h('td', { class: 'num' }, money(i.paid)),
     h('td', null, h('span', { class: 'badge ' + (i.status === 'issued' ? 'ok' : 'bad') }, t(i.status))),
     h('td', null, can(S, 'sale.void') && i.status === 'issued' && h('button', { class: 'btn', type: 'button', 'data-cancel': i.invoice_no, onclick: () => openCancel(i, () => invoicesView(S).then((v) => wrap.replaceWith(v))) }, t('cancelSale')))));
-  wrap.append(h('h1', null, t('invoices')), h('div', { class: 'card tablewrap' }, h('table', null,
+  put(wrap, h('h1', null, t('invoices')), h('div', { class: 'card tablewrap' }, h('table', null,
     h('thead', null, h('tr', null, [t('invoice'), t('date'), t('total'), t('paid'), t('status'), ''].map((x) => h('th', null, x)))), h('tbody', null, rows))));
   return wrap;
 }
@@ -153,7 +153,7 @@ function openCancel(inv, done) {
 // ───────────── team ─────────────
 export async function usersView(S) {
   const [{ users }, { roles }] = await Promise.all([api('GET', '/users'), api('GET', '/roles')]); const wrap = h('div');
-  wrap.append(h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('users')),
+  put(wrap, h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('users')),
     h('button', { class: 'btn primary', type: 'button', onclick: () => openUser(S, roles, () => usersView(S).then((v) => wrap.replaceWith(v))) }, `+ ${t('newUser')}`)),
     h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('name'), t('email'), t('role'), t('branches')].map((x) => h('th', null, x)))),
       h('tbody', null, users.map((u) => h('tr', null, h('td', null, u.name), h('td', null, u.email), h('td', null, u.role),

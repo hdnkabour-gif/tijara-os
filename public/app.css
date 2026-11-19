@@ -53,3 +53,5 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}.num{text-align:end;font-
 .chips{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.6rem}
 .chip{min-height:40px;padding:0 .9rem;border-radius:99px;border:1px solid var(--line);background:#fff;cursor:pointer}
 .chip[aria-pressed=true]{background:var(--brand);color:#fff;border-color:var(--brand)}
+a.btn{text-decoration:none}
+.tiles{margin-bottom:1rem}

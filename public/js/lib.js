@@ -18,6 +18,12 @@ export function h(tag, props, ...children) {
   children.forEach(add);
   return el;
 }
+/** Like Element.append but skips false/null/undefined (native append would print the word "false"). */
+export function put(el, ...children) {
+  const add = (c) => { if (c == null || c === false) return; if (Array.isArray(c)) c.forEach(add); else el.appendChild(c instanceof Node ? c : document.createTextNode(String(c))); };
+  children.forEach(add);
+  return el;
+}
 export const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
 
 export class ApiError extends Error {
