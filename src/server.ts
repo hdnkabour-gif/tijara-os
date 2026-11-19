@@ -9,7 +9,7 @@ const version = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) ?? process.env.A
 
 const app = createApp({
   runtime: makePool('runtime', 10), platform: makePool('platform', 3),
-  production, trustProxy: process.env.TRUST_PROXY === 'true', version,
+  uiRoot: process.env.UI_ROOT ?? 'public', production, trustProxy: process.env.TRUST_PROXY === 'true', version,
   expectedMigrations: readdirSync(process.env.MIGRATIONS_DIR ?? 'db/migrations').filter((f) => f.endsWith('.sql')).sort(),
 });
 http.createServer(app).listen(port, () => console.log(`tijara-os listening on :${port} (${version})`));

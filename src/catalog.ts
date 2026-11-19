@@ -5,16 +5,16 @@ export interface ItemDef {
   sku: string; name: string; kind: 'goods' | 'service' | 'composite';
   trackQuantity: boolean; fulfillment: 'stock' | 'backflush' | 'none';
   batchTracking?: 'none' | 'optional' | 'required'; serialTracking?: boolean;
-  baseUom?: string; price?: number; costPolicyId?: string | null;
+  baseUom?: string; price?: number; costPolicyId?: string | null; attributes?: Record<string, unknown>;
 }
 
 export async function createItem(client: pg.PoolClient, tenantId: string, d: ItemDef): Promise<string> {
   const r = await client.query(
     `INSERT INTO items (tenant_id, sku, name, kind, track_quantity, batch_tracking, serial_tracking,
-        fulfillment, base_uom, price, cost_policy_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+        fulfillment, base_uom, price, cost_policy_id, attributes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
     [tenantId, d.sku, d.name, d.kind, d.trackQuantity, d.batchTracking ?? 'none', d.serialTracking ?? false,
-     d.fulfillment, d.baseUom ?? 'unit', d.price ?? 0, d.costPolicyId ?? null]);
+     d.fulfillment, d.baseUom ?? 'unit', d.price ?? 0, d.costPolicyId ?? null, JSON.stringify(d.attributes ?? {})]);
   return r.rows[0].id;
 }
 

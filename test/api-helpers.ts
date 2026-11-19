@@ -9,7 +9,7 @@ export const PW = 'Correct-Horse-9';
 export interface Res { status: number; json: any; headers: Headers }
 
 export async function startApp(production = false) {
-  const server = http.createServer(createApp({ runtime, platform, production, trustProxy: true }));
+  const server = http.createServer(createApp({ runtime, platform, production, trustProxy: true, uiRoot: 'public' }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as any).port}`;
   const call = async (method: string, path: string, o: { token?: string; body?: unknown; raw?: string; headers?: Record<string, string>; ip?: string } = {}): Promise<Res> => {
@@ -41,10 +41,10 @@ export async function platformAdmin(api: Api) {
 }
 
 export interface Shop { tenantId: string; branchId: string; ownerEmail: string; ownerToken: string; slug: string }
-export async function createShop(api: Api, admin: { token: string }, plan = 'pro', name = 'Shop'): Promise<Shop> {
+export async function createShop(api: Api, admin: { token: string }, plan = 'pro', name = 'Shop', activities?: string[]): Promise<Shop> {
   const slug = uniq('shop').toLowerCase();
   const ownerEmail = `owner.${slug}@test.local`;
-  const r = await api.call('POST', '/platform/tenants', { token: admin.token, body: { name, slug, plan, owner: { email: ownerEmail, name: `Owner ${slug}`, password: PW } } });
+  const r = await api.call('POST', '/platform/tenants', { token: admin.token, body: { name, slug, plan, activities, owner: { email: ownerEmail, name: `Owner ${slug}`, password: PW } } });
   if (r.status !== 201) throw new Error(`createShop failed: ${r.status} ${JSON.stringify(r.json)}`);
   const l = await api.call('POST', '/auth/login', { body: { email: ownerEmail, password: PW } });
   return { tenantId: r.json.tenantId, branchId: r.json.branchId, ownerEmail, ownerToken: l.json.token, slug };

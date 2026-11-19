@@ -26,8 +26,9 @@ export async function readJson(req: http.IncomingMessage): Promise<any> {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw bad('invalid JSON'); }
 }
 
-export function send(res: http.ServerResponse, status: number, body: unknown) {
+export function send(res: http.ServerResponse, status: number, body: unknown, extra: Record<string, string | string[]> = {}) {
   res.writeHead(status, {
+    ...extra,
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
