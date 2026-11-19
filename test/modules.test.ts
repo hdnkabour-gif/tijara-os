@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 // allowed module dependencies (design section 13); enforced mechanically
 const ALLOWED: Record<string, string[]> = {
   errors: [], db: [], audit: [],
+  server: ['db'], migrate: [],           // entrypoints: no business-module dependencies
   commands: ['db', 'errors'],
   tenancy: ['db'],
   catalog: ['errors'],
