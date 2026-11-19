@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -14,7 +15,7 @@ const as = (role: 'app_runtime' | 'app_owner', db: string) =>
   new pg.Client({ host, database: db, user: role, password: role === 'app_runtime' ? 'runtime_dev_pw' : 'owner_dev_pw' });
 
 const restoreDb = `tijara_restore_${uniq('r').toLowerCase()}`;
-const dumpFile = `/tmp/claude-0/${restoreDb}.dump`;
+const dumpFile = path.join(os.tmpdir(), `${restoreDb}.dump`);
 let api: Api;
 afterAll(async () => {
   await api?.close();
