@@ -34,6 +34,10 @@ jobs:
           sudo apt-get install -y postgresql-client-${{ matrix.pg }}
           echo "PG_BIN=/usr/lib/postgresql/${{ matrix.pg }}/bin" >> "$GITHUB_ENV"
       - run: npm ci --include=dev
+      - name: Browser for UI tests
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
       - run: ./scripts/setup-db-ci.sh
       - run: npm run typecheck
       - run: npm test

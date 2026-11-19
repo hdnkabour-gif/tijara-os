@@ -13,6 +13,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY db ./db
+COPY public ./public
 USER node
 EXPOSE 3000
 # The runtime image NEVER runs migrations and never holds admin credentials.
