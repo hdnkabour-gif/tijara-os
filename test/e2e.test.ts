@@ -208,4 +208,34 @@ describe('web UI in a real browser', () => {
     await page.waitForSelector('#tile-sales');
     await ctx.close();
   }, 60_000);
+
+  it('E6: regressions from review — a paid cart can never be charged twice, and weighed totals match the server to the cent', async () => {
+    const shop = await createShop(api, admin, 'pro', 'Epicerie E6', ['grocery']);
+    const items = (await api.call('GET', '/items', { token: shop.ownerToken })).json.items;
+    const sugar = items.find((i: any) => i.sku === 'EPI-SUCRE').id, oil = items.find((i: any) => i.sku === 'EPI-HUILE').id;
+    for (const [id, qty] of [[sugar, 20], [oil, 20]] as const) await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: id, qty, unitCost: 5 } });
+    const { ctx, page, problems } = await newPage();
+    await uiLogin(page, shop.ownerEmail);
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    // 1.005 kg x 7 = 7.035 -> PostgreSQL numeric rounds to 7.04 (binary floats would give 7.03)
+    await page.click('button.prod[data-sku=EPI-SUCRE]');
+    await page.fill('#w', '1.005'); await page.getByRole('button', { name: 'Valider' }).click();
+    expect(hasMoney(await text(page, '#cart-total'), '7.04')).toBe(true);
+    await page.click('#pay-cash');
+    await page.waitForSelector('#receipt');                                          // accepted: amount equals the invoice exactly
+    expect(await page.locator('#pos-error').count()).toBe(0);
+    // touching the catalog after payment must NOT resurrect the paid lines
+    await page.click('button.prod[data-sku=EPI-HUILE]');
+    expect(await page.locator('[data-line]').count()).toBe(1);
+    expect(await page.locator('[data-line=EPI-SUCRE]').count()).toBe(0);
+    expect(hasMoney(await text(page, '#cart-total'), '18.00')).toBe(true);
+    await page.click('#pay-cash'); await page.waitForSelector('#receipt');
+    const inv = (await api.call('GET', '/invoices', { token: shop.ownerToken })).json.invoices;
+    expect(inv.map((i: any) => i.total).sort()).toEqual(['18.00', '7.04']);
+    const st = (await api.call('GET', `/stock?branchId=${shop.branchId}`, { token: shop.ownerToken })).json.stock;
+    expect(Number(st.find((r: any) => r.sku === 'EPI-SUCRE').on_hand)).toBeCloseTo(18.995, 3);   // sold once
+    expect(Number(st.find((r: any) => r.sku === 'EPI-HUILE').on_hand)).toBe(19);
+    expect(problems).toEqual([]);
+    await ctx.close();
+  }, 90_000);
 });

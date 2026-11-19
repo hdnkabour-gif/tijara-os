@@ -2,6 +2,9 @@ import { api, errorBox, field, friendly, h, modal, newKey, num, toast } from './
 import { money, qtyFmt, t } from './i18n.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
+// Exact money maths: integer arithmetic that mirrors PostgreSQL numeric round(qty*price, 2) (half up), so the amount we send always equals the invoice.
+const cents = (qty, price) => Number((BigInt(Math.round(qty * 1e4)) * BigInt(Math.round(Number(price) * 1e4)) + 500000n) / 1000000n);
+const lineMoney = (l) => cents(l.qty, l.item.price) / 100;
 const isWeighed = (i) => i.track_quantity && i.base_uom !== 'unit';
 
 /** Touch POS. One screen for every activity: weighed items ask for a weight, serial items for a serial number,
@@ -9,7 +12,7 @@ const isWeighed = (i) => i.track_quantity && i.base_uom !== 'unit';
 export async function posView(S) {
   const [{ items }, custRes] = await Promise.all([api('GET', '/items'), S.me.permissions.includes('customers.view') ? api('GET', '/customers') : { customers: [] }]);
   const sellable = items.filter((i) => i.active);
-  let branchId = S.branches[0]?.id, filter = 'all', q = '', cart = [], key = newKey(), busy = false;
+  let branchId = S.branches[0]?.id, filter = 'all', q = '', cart = [], key = newKey(), busy = false, finished = null;
   const customers = custRes.customers;
   let customerId = '';
 
@@ -17,7 +20,7 @@ export async function posView(S) {
   const cartEl = h('div', { class: 'card cart', id: 'cart' });
   const root = h('div', null, h('h1', null, t('nav_pos')));
 
-  const total = () => r2(cart.reduce((a, l) => a + r2(l.qty * Number(l.item.price)), 0));
+  const total = () => cart.reduce((a, l) => a + cents(l.qty, l.item.price), 0) / 100;
   const touch = () => { key = newKey(); };                       // any cart change = a new business command
 
   function drawCatalog() {
@@ -28,6 +31,7 @@ export async function posView(S) {
   }
 
   function pick(item) {
+    if (finished) finished = null;                           // touching the catalog after a paid sale always starts a NEW sale
     if (item.serial_tracking) return askSerial(item);
     if (isWeighed(item)) return askWeight(item);
     const ex = cart.find((l) => l.item.id === item.id);
@@ -59,11 +63,12 @@ export async function posView(S) {
   function setQty(l, v) { if (v > 0) l.qty = v; touch(); drawCart(); }
   function drawCart(result) {
     cartEl.replaceChildren(h('h2', null, t('cart')));
+    if (finished) result = finished;
     if (result) {
       cartEl.append(h('div', { id: 'receipt' }, h('p', { class: 'badge ok' }, t('saleDone')),
         h('p', null, `${t('invoice')} ${result.invoiceNo}`), h('div', { class: 'total', id: 'receipt-total' }, money(result.total)),
         result.due > 0 && h('p', { class: 'note' }, `${t('due')}: ${money(result.due)}`),
-        h('button', { class: 'btn primary', id: 'new-sale', type: 'button', onclick: () => { cart = []; customerId = ''; touch(); drawCart(); } }, t('newSale'))));
+        h('button', { class: 'btn primary', id: 'new-sale', type: 'button', onclick: () => { finished = null; touch(); drawCart(); } }, t('newSale'))));
       return;
     }
     if (cart.length === 0) { cartEl.append(h('p', { class: 'muted' }, t('cartEmpty'))); return; }
@@ -71,7 +76,7 @@ export async function posView(S) {
       const input = h('input', { 'aria-label': t('qty'), inputmode: 'decimal', value: String(l.qty), disabled: Boolean(l.serialNo), onchange: (e) => { const v = num(e.target.value); if (v > 0) setQty(l, v); else drawCart(); } });
       cartEl.append(h('div', { class: 'cartline', 'data-line': l.item.sku },
         h('div', null, h('strong', null, l.item.name), l.serialNo && h('div', { class: 'muted' }, `${t('serialNo')}: ${l.serialNo}`), h('div', { class: 'muted' }, `${money(l.item.price)} × ${qtyFmt(l.qty)}`)),
-        h('div', { class: 'num' }, h('strong', null, money(r2(l.qty * Number(l.item.price))))),
+        h('div', { class: 'num' }, h('strong', null, money(lineMoney(l)))),
         h('div', { class: 'qty' },
           !l.serialNo && h('button', { type: 'button', 'aria-label': '−', onclick: () => (l.qty > 1 ? setQty(l, r2(l.qty - 1)) : null) }, '−'), input,
           !l.serialNo && h('button', { type: 'button', 'aria-label': '+', onclick: () => setQty(l, r2(l.qty + 1)) }, '+')),
@@ -87,7 +92,8 @@ export async function posView(S) {
         const body = { branchId, lines: cart.map((l) => ({ itemId: l.item.id, qty: l.qty, ...(l.serialNo ? { serialNo: l.serialNo } : {}) })), payments };
         if (customerId) body.customerId = customerId;
         const r = await api('POST', '/sales/quick', body, { 'idempotency-key': key });   // same key on retry: never double-charges
-        drawCart(r);
+        finished = r; cart = []; customerId = ''; touch();   // the paid cart is cleared immediately: it can never be charged twice
+        drawCart();
       } catch (ex) { err.replaceChildren(errorBox(friendly(ex))); } finally { busy = false; }
     };
     const T = total();

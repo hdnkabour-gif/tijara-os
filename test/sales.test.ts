@@ -31,7 +31,7 @@ async function butcher() {
   return { t, ids };
 }
 const movementsFor = (t: TestTenant, lineIds: string[]) =>
-  q(t, `SELECT item_id, movement_type, qty_delta, stock_status FROM stock_movements WHERE source_doc_id = ANY($1::uuid[]) ORDER BY command_seq`, [lineIds]);
+  q(t, `SELECT item_id, movement_type, qty_delta, stock_status FROM stock_movements WHERE source_doc_id = ANY($1::uuid[]) ORDER BY created_at, command_seq`, [lineIds]);
 
 describe('sale of meat with a grilling service (T1)', () => {
   it('T1: 1.47kg kafta @130 + grilling @20/kg = 220.50; the meat leaves stock ONCE; weighing alone never touches the ledger', async () => {
@@ -105,7 +105,7 @@ describe('cancellation and correction (T3–T6)', () => {
     await cmd(t.ctx(t.cashierUserId), (cc) => cancelOrder(cc, { orderId: sale.orderId, reason: 'wrong order', committed: 'return' }));
 
     expect(await balance(t, ids.beef)).toMatchObject({ onHand: 20 });                              // back in sellable stock
-    const types = (await q(t, `SELECT movement_type FROM stock_movements WHERE source_doc_id=$1 ORDER BY command_seq`, [sale.lineIds[0]])).map((m) => m.movement_type);
+    const types = (await q(t, `SELECT movement_type FROM stock_movements WHERE source_doc_id=$1 ORDER BY created_at, command_seq`, [sale.lineIds[0]])).map((m) => m.movement_type);
     expect(types).toEqual(['sale', 'return_in']);                                                  // original sale kept, never deleted
     expect((await q(t, `SELECT status FROM invoices WHERE order_id=$1`, [sale.orderId]))[0].status).toBe('void');
     expect(Number((await q(t, `SELECT sum(amount) AS s FROM payments`))[0].s)).toBe(0);           // 260 paid, 260 refunded
@@ -116,7 +116,7 @@ describe('cancellation and correction (T3–T6)', () => {
     await cmd(t.ctx(), (cc) => cancelOrder(cc, { orderId: sale2.orderId, reason: 'dropped on floor' }));
     expect(await balance(t, ids.beef)).toMatchObject({ onHand: 19 });
     expect(await balance(t, ids.beef, 'damaged')).toMatchObject({ onHand: 0 });                   // reversal + waste net to zero
-    expect((await q(t, `SELECT movement_type FROM stock_movements WHERE source_doc_id=$1 ORDER BY command_seq`, [sale2.lineIds[0]])).map((m) => m.movement_type))
+    expect((await q(t, `SELECT movement_type FROM stock_movements WHERE source_doc_id=$1 ORDER BY created_at, command_seq`, [sale2.lineIds[0]])).map((m) => m.movement_type))
       .toEqual(['sale', 'reversal', 'waste']);
   });
 
