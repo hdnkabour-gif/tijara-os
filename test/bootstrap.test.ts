@@ -50,4 +50,17 @@ describe('platform admin bootstrap', () => {
     await expect(withOwnerClient((c) => bootstrapAdmin(c, email, 'has spaces and is long enough to pass the length check xx', () => {}))).rejects.toThrow(/32-128/);
     expect((await owner.query('SELECT count(*)::int n FROM platform_admins')).rows[0].n).toBe(0);
   });
+
+  it('B3: a missed (expired, unclaimed) invitation can be renewed for the SAME email; old invitation dies; no second admin; other emails are refused', async () => {
+    await owner.query('DELETE FROM platform_admins');
+    const email = `boot3.${uniq('b')}@test.local`, first = newInvite(), second = newInvite();
+    await withOwnerClient((c) => bootstrapAdmin(c, email, first, () => {}));
+    await owner.query(`UPDATE password_resets SET expires_at = now() - interval '1 minute'`);
+    await expect(withOwnerClient((c) => bootstrapAdmin(c, `intruder.${uniq('i')}@test.local`, newInvite(), () => {}))).rejects.toThrow(/different email/);
+    expect(await withOwnerClient((c) => bootstrapAdmin(c, email.toUpperCase(), second, () => {}))).toBe(true);        // renewed
+    expect((await owner.query('SELECT count(*)::int n FROM platform_admins')).rows[0].n).toBe(1);
+    await expect(consumeReset(runtime, first, 'Chosen-By-Admin-77')).rejects.toThrow();                           // old one is dead
+    await consumeReset(runtime, second, 'Chosen-By-Admin-77');                                                    // new one works
+    expect(await withOwnerClient((c) => bootstrapAdmin(c, email, newInvite(), () => {}))).toBe(false);            // claimed now -> no-op
+  });
 });

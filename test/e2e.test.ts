@@ -244,4 +244,30 @@ describe('web UI in a real browser', () => {
     expect(problems).toEqual([]);
     await ctx.close();
   }, 90_000);
+
+  it('E7: while a payment request is in flight the cart is frozen, so an extra tap can never be lost or double-charged', async () => {
+    const shop = await createShop(api, admin, 'pro', 'Epicerie E7', ['grocery']);
+    const items = (await api.call('GET', '/items', { token: shop.ownerToken })).json.items;
+    const oil = items.find((i: any) => i.sku === 'EPI-HUILE').id, sugar = items.find((i: any) => i.sku === 'EPI-SUCRE').id;
+    for (const id of [oil, sugar]) await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: id, qty: 20, unitCost: 5 } });
+    const { ctx, page, problems } = await newPage();
+    await page.route('**/sales/quick', async (route: any) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });   // slow network
+    await uiLogin(page, shop.ownerEmail);
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.click('button.prod[data-sku=EPI-HUILE]');
+    await page.click('#pay-cash');
+    await page.waitForSelector('[aria-busy=true]');
+    await page.click('button.prod[data-sku=EPI-SUCRE]', { force: true }).catch(() => {});      // user taps another product during the request
+    await page.locator('[data-line=EPI-HUILE] button').first().click({ force: true }).catch(() => {});
+    await page.waitForSelector('#receipt');
+    expect(hasMoney(await text(page, '#receipt-total'), '18.00')).toBe(true);
+    await page.click('#new-sale');
+    expect(await page.locator('[data-line]').count()).toBe(0);                                  // the extra tap was ignored, nothing half-added
+    const st = (await api.call('GET', `/stock?branchId=${shop.branchId}`, { token: shop.ownerToken })).json.stock;
+    expect(Number(st.find((r: any) => r.sku === 'EPI-HUILE').on_hand)).toBe(19);
+    expect(Number(st.find((r: any) => r.sku === 'EPI-SUCRE').on_hand)).toBe(20);
+    expect((await api.call('GET', '/invoices', { token: shop.ownerToken })).json.invoices).toHaveLength(1);
+    expect(problems).toEqual([]);
+    await ctx.close();
+  }, 60_000);
 });

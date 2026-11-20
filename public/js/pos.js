@@ -31,6 +31,7 @@ export async function posView(S) {
   }
 
   function pick(item) {
+    if (busy) return;                                        // payment in flight: the cart is frozen
     if (finished) finished = null;                           // touching the catalog after a paid sale always starts a NEW sale
     if (item.serial_tracking) return askSerial(item);
     if (isWeighed(item)) return askWeight(item);
@@ -60,7 +61,7 @@ export async function posView(S) {
     } }, ...field(t('serialNo'), s, 'sn'), err, h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, t('confirm')))));
   }
 
-  function setQty(l, v) { if (v > 0) l.qty = v; touch(); drawCart(); }
+  function setQty(l, v) { if (busy) return; if (v > 0) l.qty = v; touch(); drawCart(); }
   function drawCart(result) {
     cartEl.replaceChildren(h('h2', null, t('cart')));
     if (finished) result = finished;
@@ -80,21 +81,21 @@ export async function posView(S) {
         h('div', { class: 'qty' },
           !l.serialNo && h('button', { type: 'button', 'aria-label': '−', onclick: () => (l.qty > 1 ? setQty(l, r2(l.qty - 1)) : null) }, '−'), input,
           !l.serialNo && h('button', { type: 'button', 'aria-label': '+', onclick: () => setQty(l, r2(l.qty + 1)) }, '+')),
-        h('button', { class: 'btn', type: 'button', 'aria-label': `${t('remove')} ${l.item.name}`, onclick: () => { cart.splice(idx, 1); touch(); drawCart(); } }, t('remove'))));
+        h('button', { class: 'btn', type: 'button', 'aria-label': `${t('remove')} ${l.item.name}`, onclick: () => { if (busy) return; cart.splice(idx, 1); touch(); drawCart(); } }, t('remove'))));
     });
     const err = h('div', { id: 'pos-error' });
     const sel = h('select', { id: 'pos-customer', 'aria-label': t('customer'), onchange: (e) => { customerId = e.target.value; } },
       h('option', { value: '' }, t('noCustomer')), customers.map((c) => h('option', { value: c.id, selected: c.id === customerId }, c.name)));
     const credit = h('input', { id: 'pos-paid', inputmode: 'decimal', 'aria-label': t('amountPaid'), value: '0' });
     const pay = async (payments) => {
-      if (busy) return; busy = true; err.replaceChildren();
+      if (busy) return; busy = true; cartEl.setAttribute('aria-busy', 'true'); catalogEl.classList.add('frozen'); err.replaceChildren();
       try {
         const body = { branchId, lines: cart.map((l) => ({ itemId: l.item.id, qty: l.qty, ...(l.serialNo ? { serialNo: l.serialNo } : {}) })), payments };
         if (customerId) body.customerId = customerId;
         const r = await api('POST', '/sales/quick', body, { 'idempotency-key': key });   // same key on retry: never double-charges
         finished = r; cart = []; customerId = ''; touch();   // the paid cart is cleared immediately: it can never be charged twice
         drawCart();
-      } catch (ex) { err.replaceChildren(errorBox(friendly(ex))); } finally { busy = false; }
+      } catch (ex) { err.replaceChildren(errorBox(friendly(ex))); } finally { busy = false; cartEl.removeAttribute('aria-busy'); catalogEl.classList.remove('frozen'); }
     };
     const T = total();
     put(cartEl, h('div', { class: 'total', id: 'cart-total' }, money(T)),

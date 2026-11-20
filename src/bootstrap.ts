@@ -13,16 +13,22 @@ export async function bootstrapAdmin(c: pg.Client, rawEmail: string, invite: str
   const email = rawEmail.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('BOOTSTRAP_ADMIN_EMAIL is not a valid email');
   if (!INVITE_RE.test(invite)) throw new Error('BOOTSTRAP_ADMIN_INVITE must be 32-128 URL-safe characters (generate with: openssl rand -base64 32 | tr "+/" "-_" | tr -d "=")');
-  if ((await c.query('SELECT 1 FROM platform_admins LIMIT 1')).rowCount) {
+  const admins = (await c.query('SELECT u.id, lower(u.email) AS email, (u.password_hash IS NOT NULL) AS claimed FROM platform_admins pa JOIN users u ON u.id = pa.user_id')).rows;
+  if (admins.some((x) => x.claimed)) {
     log('bootstrap: a platform admin already exists - nothing to do (remove BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_INVITE)');
     return false;
+  }
+  // Admins exist but nobody ever set a password (invitation expired/lost): renew ONLY for that same address, never add another admin.
+  if (admins.length > 0 && !admins.some((x) => x.email === email)) {
+    throw new Error('an unclaimed platform admin with a different email already exists; use that email to renew the invitation');
   }
   const hash = crypto.createHash('sha256').update(invite).digest('hex');
   await c.query('BEGIN');
   try {
     let id = (await c.query('SELECT id FROM users WHERE lower(email)=$1', [email])).rows[0]?.id;
     if (!id) id = (await c.query(`INSERT INTO users (email, name) VALUES ($1,'Platform Admin') RETURNING id`, [email])).rows[0].id;
-    await c.query('INSERT INTO platform_admins (user_id) VALUES ($1)', [id]);
+    await c.query('INSERT INTO platform_admins (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
+    await c.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [id]);   // older invitations stop working
     await c.query(`INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1,$2, now() + interval '60 minutes')`, [id, hash]);
     await c.query(`INSERT INTO platform_audit (action, meta) VALUES ('platform_admin.bootstrapped', $1)`, [JSON.stringify({ userId: id })]);
     await c.query('COMMIT');
