@@ -1,5 +1,7 @@
 import type pg from 'pg';
 import { withTenant } from './db.js';
+import { createItem } from './catalog.js';
+import { ACTIVITIES } from './templates.js';
 
 const CAT = ['catalog.view', 'catalog.manage', 'stock.view', 'stock.receive', 'stock.adjust', 'sale.view', 'sale.create', 'sale.discount',
   'sale.price_override', 'sale.void', 'customers.view', 'customers.manage', 'branches.view', 'report.view'];
@@ -16,9 +18,11 @@ export async function createUser(platform: pg.Pool, email: string, name: string,
 
 /** Platform action: create tenant (via SECURITY DEFINER fn), then default branch + roles under tenant context. */
 export async function provisionTenant(
-  platform: pg.Pool, runtime: pg.Pool, o: { name: string; slug: string; plan: string },
+  platform: pg.Pool, runtime: pg.Pool, o: { name: string; slug: string; plan: string; settings?: object },
 ) {
-  const t = await platform.query(`SELECT create_tenant($1,$2,$3) AS id`, [o.name, o.slug, o.plan]);
+  const t = o.settings
+    ? await platform.query(`SELECT create_tenant($1,$2,$3,$4::jsonb) AS id`, [o.name, o.slug, o.plan, JSON.stringify(o.settings)])
+    : await platform.query(`SELECT create_tenant($1,$2,$3) AS id`, [o.name, o.slug, o.plan]);
   const tenantId: string = t.rows[0].id;
   const out = await withTenant(runtime, { tenantId }, async (c) => {
     const b = await c.query(`INSERT INTO branches (tenant_id, name) VALUES ($1,'Main') RETURNING id`, [tenantId]);
@@ -52,9 +56,20 @@ export async function hasPermission(c: pg.PoolClient, tenantId: string, userId: 
 /** Platform action: a new shop with its first owner, audited in platform_audit. */
 export async function platformCreateShop(
   platform: pg.Pool, runtime: pg.Pool, actorUserId: string,
-  o: { name: string; slug: string; plan: string; owner: { email: string; name: string; passwordHash: string } },
+  o: { name: string; slug: string; plan: string; activities?: string[]; owner: { email: string; name: string; passwordHash: string } },
 ) {
-  const t = await provisionTenant(platform, runtime, { name: o.name, slug: o.slug, plan: o.plan });
+  const activities = o.activities ?? [];
+  const t = await provisionTenant(platform, runtime, { name: o.name, slug: o.slug, plan: o.plan, settings: { activities } });
+  await withTenant(runtime, { tenantId: t.tenantId }, async (c) => {            // starter catalog (examples the owner will edit)
+    const seen = new Set<string>();
+    for (const a of ACTIVITIES.filter((x) => activities.includes(x.id))) {
+      for (const it of a.items) {
+        if (seen.has(it.sku)) continue;
+        seen.add(it.sku);
+        await createItem(c, t.tenantId, { ...it, attributes: { sample: true, activity: a.id } });
+      }
+    }
+  });
   const ownerId = await createUser(platform, o.owner.email, o.owner.name, o.owner.passwordHash);
   await addMember(runtime, t.tenantId, ownerId, t.roles.owner);
   await platform.query(`INSERT INTO platform_audit (actor_user_id, action, meta) VALUES ($1,'tenant.created',$2)`,

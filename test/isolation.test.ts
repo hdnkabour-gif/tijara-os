@@ -86,6 +86,15 @@ describe('tenant isolation (RLS) — T9, T10, T11', () => {
   });
 });
 
+describe('migration bookkeeping access', () => {
+  it('M1: the runtime role can read schema_migrations (needed by /ready) and can never write it', async () => {
+    expect((await runtime.query('SELECT count(*)::int n FROM schema_migrations')).rows[0].n).toBeGreaterThan(0);
+    await expect(runtime.query(`INSERT INTO schema_migrations (name) VALUES ('evil.sql')`)).rejects.toMatchObject({ code: '42501' });
+    await expect(runtime.query('DELETE FROM schema_migrations')).rejects.toMatchObject({ code: '42501' });
+    await expect(runtime.query(`UPDATE schema_migrations SET name = 'x'`)).rejects.toMatchObject({ code: '42501' });
+  });
+});
+
 describe('append-only ledger — T17', () => {
   it('runtime cannot UPDATE/DELETE stock_movements or audit_log; trigger blocks even the owner', async () => {
     const t = await newTenant();

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { bootstrapAdmin } from './bootstrap.js';
 
 /**
  * Production-safe migration runner.
@@ -49,6 +50,9 @@ async function main() {
       console.log(`migration applied: ${f}`);
       ran++;
     }
+    // always (idempotent): runtime reads the bookkeeping table, never writes it - regardless of what earlier migrations granted
+    await c.query('REVOKE ALL ON schema_migrations FROM app_runtime, app_platform');
+    await c.query('GRANT SELECT ON schema_migrations TO app_runtime');
     await c.query('COMMIT');
     if (ran === 0) console.log('migrations: nothing to apply');
 
@@ -66,6 +70,10 @@ async function main() {
       throw new Error(`security posture check failed: ${JSON.stringify({ roles: roles.length, badRole, unprotected, ownedByRuntime })}`);
     }
     console.log('security posture OK: 3 non-bypass roles, all tenant tables FORCE RLS');
+    if (process.env.BOOTSTRAP_ADMIN_EMAIL || process.env.BOOTSTRAP_ADMIN_INVITE) {
+      if (!process.env.BOOTSTRAP_ADMIN_EMAIL || !process.env.BOOTSTRAP_ADMIN_INVITE) throw new Error('set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_INVITE together');
+      await bootstrapAdmin(c, process.env.BOOTSTRAP_ADMIN_EMAIL, process.env.BOOTSTRAP_ADMIN_INVITE);
+    }
   } catch (e) {
     await c.query('ROLLBACK').catch(() => {});
     throw e;

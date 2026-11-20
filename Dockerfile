@@ -11,9 +11,11 @@ ENV NODE_ENV=production APP_ENV=production
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json ./
+COPY package.json VERSION* ./
 COPY db ./db
+COPY public ./public
 USER node
 EXPOSE 3000
-# migrations run before the server starts; a failed migration aborts the deploy
-CMD ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
+# The runtime image NEVER runs migrations and never holds admin credentials.
+# Migrations are a separate privileged service (railway.migrate.json -> node dist/migrate.js).
+CMD ["node", "dist/server.js"]

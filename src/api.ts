@@ -8,17 +8,20 @@ import { withTenant } from './db.js';
 import { DomainError } from './errors.js';
 import { receiveStock } from './inventory.js';
 import { platformCreateShop } from './tenancy.js';
+import { ACTIVITIES, activityIds } from './templates.js';
+import { serveUi } from './static.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
 
-export interface AppDeps { runtime: pg.Pool; platform: pg.Pool; production: boolean; trustProxy?: boolean; version?: string }
+export interface AppDeps { runtime: pg.Pool; platform: pg.Pool; production: boolean; trustProxy?: boolean; version?: string; expectedMigrations?: string[]; uiRoot?: string }
 
 interface Rc {
   req: http.IncomingMessage; body: any; query: URLSearchParams; params: Record<string, string>;
-  token: string | null; session: authm.SessionInfo | null; ip: string;
+  token: string | null; session: authm.SessionInfo | null; ip: string; viaCookie: boolean;
 }
-type Handler = (rc: Rc) => Promise<{ status?: number; body: unknown }>;
-interface Route { method: string; re: RegExp; keys: string[]; handler: Handler; auth: 'public' | 'session' }
+type Handler = (rc: Rc) => Promise<{ status?: number; body: unknown; headers?: Record<string, string | string[]> }>;
+const COOKIE = 'tj_session', COOKIE_MAX_AGE = 12 * 60 * 60;
+interface Route { method: string; path: string; re: RegExp; keys: string[]; handler: Handler; auth: 'public' | 'session' }
 
 const KINDS = ['goods', 'service', 'composite'] as const;
 const FULFILL = ['stock', 'backflush', 'none'] as const;
@@ -30,8 +33,10 @@ export function createApp(d: AppDeps): http.RequestListener {
   const add = (method: string, path: string, auth: 'public' | 'session', handler: Handler) => {
     const keys: string[] = [];
     const re = new RegExp('^' + path.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
-    routes.push({ method, re, keys, handler, auth });
+    routes.push({ method, path, re, keys, handler, auth });
   };
+  const cookieHeader = (value: string, maxAge: number) =>
+    `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${d.production ? '; Secure' : ''}`;
   const loginByIp = new RateLimiter(30, 15 * 60_000), loginByEmail = new RateLimiter(10, 15 * 60_000), forgotByIp = new RateLimiter(10, 15 * 60_000);
 
   /** Resolve tenant context from the SESSION only (never from the request), check membership, permission and branch scope. */
@@ -63,9 +68,15 @@ export function createApp(d: AppDeps): http.RequestListener {
     const emailV = email(rc.body.email), pw = str(rc.body.password, 'password', 200);
     if (!loginByIp.allow(rc.ip) || !loginByEmail.allow(emailV)) throw new HttpError(429, 'RATE_LIMITED', 'too many attempts, try later');
     const r = await authm.login(d.runtime, { email: emailV, password: pw, tenantId: optUuid(rc.body.tenantId, 'tenantId'), ip: rc.ip, ua: String(rc.req.headers['user-agent'] ?? '') });
-    return { body: { token: r.token, user: { id: r.userId, name: r.name }, activeTenantId: r.activeTenantId, tenants: r.tenants } };
+    const base = { user: { id: r.userId, name: r.name }, activeTenantId: r.activeTenantId, tenants: r.tenants };
+    // Browser mode: the session token lives ONLY in an HttpOnly cookie and is never exposed to page scripts.
+    if (rc.body.cookie === true) return { body: base, headers: { 'set-cookie': cookieHeader(r.token, COOKIE_MAX_AGE) } };
+    return { body: { token: r.token, ...base } };
   });
-  add('POST', '/auth/logout', 'session', async (rc) => { await authm.logout(d.runtime, rc.token!); return { body: { status: 'ok' } }; });
+  add('POST', '/auth/logout', 'session', async (rc) => {
+    await authm.logout(d.runtime, rc.token!);
+    return { body: { status: 'ok' }, headers: { 'set-cookie': cookieHeader('', 0) } };
+  });
   add('POST', '/auth/switch-tenant', 'session', async (rc) => {
     const ok = await authm.switchTenant(d.runtime, rc.token!, uuid(rc.body.tenantId, 'tenantId'));
     if (!ok) throw new HttpError(403, 'FORBIDDEN', 'not a member of this tenant');
@@ -97,7 +108,21 @@ export function createApp(d: AppDeps): http.RequestListener {
     return { body: { user: { id: s.userId, name: s.name, email: s.email }, isPlatformAdmin: s.isPlatformAdmin, activeTenantId: s.activeTenantId, tenants, permissions } };
   });
 
+  add('GET', '/activities', 'session', async () => ({ body: { activities: ACTIVITIES.map((a) => ({ id: a.id, label: a.label, sampleItems: a.items.length })) } }));
+  add('GET', '/tenant', 'session', async (rc) => {
+    const s = rc.session!;
+    if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first');
+    const row = (await withTenant(d.runtime, { tenantId: s.activeTenantId, userId: s.userId }, (c) => c.query(
+      'SELECT id, name, slug, plan_id, settings FROM tenants WHERE id = $1', [s.activeTenantId]))).rows[0];
+    if (!row) throw new HttpError(403, 'FORBIDDEN', 'not a member of this tenant');
+    return { body: { id: row.id, name: row.name, slug: row.slug, plan: row.plan_id, activities: row.settings?.activities ?? [] } };
+  });
+
   // ───────────── platform (super admin) ─────────────
+  add('GET', '/platform/tenants', 'session', async (rc) => {
+    if (!rc.session!.isPlatformAdmin) throw new HttpError(403, 'FORBIDDEN', 'platform administrators only');
+    return { body: { tenants: (await d.platform.query('SELECT * FROM platform_list_tenants()')).rows } };
+  });
   add('POST', '/platform/tenants', 'session', async (rc) => {
     if (!rc.session!.isPlatformAdmin) throw new HttpError(403, 'FORBIDDEN', 'platform administrators only');
     const o = rc.body, pwErr = authm.checkPasswordPolicy(o.owner?.password);
@@ -106,6 +131,7 @@ export function createApp(d: AppDeps): http.RequestListener {
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(slug)) throw bad('slug must be lowercase letters, digits, dashes');
     const t = await platformCreateShop(d.platform, d.runtime, rc.session!.userId, {
       name: str(o.name, 'name'), slug, plan: oneOf(o.plan, 'plan', ['basic', 'pro']),
+      activities: (o.activities == null ? [] : arr(o.activities, 'activities', 10)).map((a: unknown) => oneOf(a, 'activities[]', activityIds as readonly string[])),
       owner: { email: email(o.owner?.email), name: str(o.owner?.name, 'owner.name'), passwordHash: await authm.hashPassword(o.owner.password) },
     });
     return { status: 201, body: { tenantId: t.tenantId, branchId: t.branchId, ownerUserId: t.ownerId } };
@@ -162,7 +188,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   add('GET', '/items', 'session', async (rc) => {
     const a = await authorize(rc, 'catalog.view');
     return { body: { items: (await withTenant(d.runtime, a.ctx, (c) => c.query(
-      `SELECT id, sku, name, kind, track_quantity, batch_tracking, serial_tracking, fulfillment, base_uom, price, active FROM items ORDER BY sku`))).rows } };
+      `SELECT id, sku, name, kind, track_quantity, batch_tracking, serial_tracking, fulfillment, base_uom, price, active, attributes FROM items ORDER BY sku`))).rows } };
   });
   add('POST', '/items', 'session', async (rc) => {
     const a = await authorize(rc, 'catalog.manage'), b = rc.body;
@@ -288,6 +314,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   return async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://x');
+      if (d.uiRoot && serveUi(d.uiRoot, req, res, url.pathname, d.production)) return;
       if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { status: 'ok', version: d.version ?? 'dev' });
       if (req.method === 'GET' && url.pathname === '/ready') {
         const role = (await d.runtime.query('SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user')).rows[0];
@@ -297,8 +324,13 @@ export function createApp(d: AppDeps): http.RequestListener {
               AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped)
               AND NOT (c.relrowsecurity AND c.relforcerowsecurity)`)).rows[0].n;
         const migrations = (await d.runtime.query(`SELECT current_setting('server_version') AS v, (SELECT count(*)::int FROM pg_tables WHERE schemaname='public' AND tablename='schema_migrations') AS m`)).rows[0];
-        const ok = !(role.rolsuper || role.rolbypassrls) && unprotected === 0 && migrations.m === 1;
-        return send(res, ok ? 200 : 503, { status: ok ? 'ready' : 'not_ready', rlsBypassPossible: Boolean(role.rolsuper || role.rolbypassrls), unprotectedTables: unprotected, migrated: migrations.m === 1, postgres: migrations.v, version: d.version ?? 'dev' });
+        let pending: number | null = null;
+        if (migrations.m === 1 && d.expectedMigrations) {
+          const applied = new Set((await d.runtime.query('SELECT name FROM schema_migrations')).rows.map((r) => r.name));
+          pending = d.expectedMigrations.filter((n) => !applied.has(n)).length;
+        }
+        const ok = !(role.rolsuper || role.rolbypassrls) && unprotected === 0 && migrations.m === 1 && (pending ?? 0) === 0;
+        return send(res, ok ? 200 : 503, { status: ok ? 'ready' : 'not_ready', rlsBypassPossible: Boolean(role.rolsuper || role.rolbypassrls), unprotectedTables: unprotected, migrated: migrations.m === 1, pendingMigrations: pending, postgres: migrations.v, version: d.version ?? 'dev' });
       }
       let matched: { r: Route; params: Record<string, string> } | null = null;
       let pathExists = false;
@@ -313,14 +345,27 @@ export function createApp(d: AppDeps): http.RequestListener {
       if (!matched) return send(res, pathExists ? 405 : 404, { error: { code: pathExists ? 'METHOD_NOT_ALLOWED' : 'NOT_FOUND', message: 'not found' } });
       const body = await readJson(req);
       const auth = String(req.headers.authorization ?? '');
-      const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+      let token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+      let viaCookie = false;
+      if (!token) {
+        const m = /(?:^|;\s*)tj_session=([^;]+)/.exec(String(req.headers.cookie ?? ''));
+        if (m) { token = m[1]; viaCookie = true; }
+      }
+      // CSRF defence for cookie sessions (in addition to SameSite=Strict): same-origin only + a custom header browsers
+      // cannot send cross-site without a CORS preflight (which this server never grants).
+      const mutating = req.method !== 'GET' && req.method !== 'HEAD';
+      if (mutating && (viaCookie || (matched.r.path === '/auth/login' && body?.cookie === true))) {
+        const origin = req.headers.origin;
+        if (origin && new URL(String(origin)).host !== req.headers.host) throw new HttpError(403, 'CSRF', 'cross-origin request refused');
+        if (req.headers['x-requested-with'] !== 'tijara-web') throw new HttpError(403, 'CSRF', 'missing x-requested-with header');
+      }
       let session: authm.SessionInfo | null = null;
       if (matched.r.auth === 'session') {
         session = token ? await authm.getSession(d.runtime, token) : null;
         if (!session) throw new HttpError(401, 'UNAUTHENTICATED', 'authentication required');
       }
-      const out = await matched.r.handler({ req, body, query: url.searchParams, params: matched.params, token, session, ip: clientIp(req) });
-      return send(res, out.status ?? 200, out.body);
+      const out = await matched.r.handler({ req, body, query: url.searchParams, params: matched.params, token, session, ip: clientIp(req), viaCookie });
+      return send(res, out.status ?? 200, out.body, out.headers);
     } catch (e) {
       const m = mapError(e);
       return send(res, m.status, { error: { code: m.code, message: m.message } });

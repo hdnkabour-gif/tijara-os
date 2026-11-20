@@ -5,10 +5,15 @@ on:
   pull_request:
 jobs:
   test:
+    name: test (pg${{ matrix.pg }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [16, 18]
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.pg }}
         env: { POSTGRES_PASSWORD: postgres }
         ports: ['5432:5432']
         options: >-
@@ -21,7 +26,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
+      - name: Install PostgreSQL client matching the server (needed by the backup/restore drill)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-${{ matrix.pg }}
+          echo "PG_BIN=/usr/lib/postgresql/${{ matrix.pg }}/bin" >> "$GITHUB_ENV"
       - run: npm ci --include=dev
+      - name: Browser for UI tests
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
       - run: ./scripts/setup-db-ci.sh
       - run: npm run typecheck
       - run: npm test
