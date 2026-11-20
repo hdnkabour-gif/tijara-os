@@ -63,4 +63,19 @@ describe('platform admin bootstrap', () => {
     await consumeReset(runtime, second, 'Chosen-By-Admin-77');                                                    // new one works
     expect(await withOwnerClient((c) => bootstrapAdmin(c, email, newInvite(), () => {}))).toBe(false);            // claimed now -> no-op
   });
+
+  it('B4: re-running the job with the SAME invitation (every redeploy does) is safe before and after expiry, and never creates duplicates', async () => {
+    await owner.query('DELETE FROM platform_admins');
+    const email = `boot4.${uniq('b')}@test.local`, invite = newInvite();
+    await withOwnerClient((c) => bootstrapAdmin(c, email, invite, () => {}));
+    await withOwnerClient((c) => bootstrapAdmin(c, email, invite, () => {}));                                       // redeploy 1: must not throw
+    await withOwnerClient((c) => bootstrapAdmin(c, email, invite, () => {}));                                       // redeploy 2
+    const hash = crypto.createHash('sha256').update(invite).digest('hex');
+    expect((await owner.query('SELECT count(*)::int n FROM password_resets WHERE token_hash=$1', [hash])).rows[0].n).toBe(1);
+    expect((await owner.query('SELECT count(*)::int n FROM platform_admins')).rows[0].n).toBe(1);
+    await owner.query(`UPDATE password_resets SET expires_at = now() - interval '1 minute' WHERE token_hash=$1`, [hash]);
+    await withOwnerClient((c) => bootstrapAdmin(c, email, invite, () => {}));                                       // expired + same invite: window renewed
+    await consumeReset(runtime, invite, 'Chosen-By-Admin-77');                                                      // and it works, exactly once
+    await expect(consumeReset(runtime, invite, 'Another-Pass-1234567')).rejects.toThrow();
+  });
 });

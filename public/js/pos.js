@@ -2,6 +2,7 @@ import { api, errorBox, field, friendly, h, modal, newKey, num, toast, put } fro
 import { money, qtyFmt, t, uom } from './i18n.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
+const r4 = (n) => Math.round(n * 1e4) / 1e4;      // weighed quantities keep up to 4 decimals (never rounded to 2 by the step buttons)
 // Exact money maths: integer arithmetic that mirrors PostgreSQL numeric round(qty*price, 2) (half up), so the amount we send always equals the invoice.
 const cents = (qty, price) => Number((BigInt(Math.round(qty * 1e4)) * BigInt(Math.round(Number(price) * 1e4)) + 500000n) / 1000000n);
 const lineMoney = (l) => cents(l.qty, l.item.price) / 100;
@@ -36,7 +37,7 @@ export async function posView(S) {
     if (item.serial_tracking) return askSerial(item);
     if (isWeighed(item)) return askWeight(item);
     const ex = cart.find((l) => l.item.id === item.id);
-    if (ex) ex.qty = r2(ex.qty + 1); else cart.push({ item, qty: 1 });
+    if (ex) ex.qty = r4(ex.qty + 1); else cart.push({ item, qty: 1 });
     touch(); drawCart();
   }
   function askWeight(item) {
@@ -79,8 +80,8 @@ export async function posView(S) {
         h('div', null, h('strong', null, l.item.name), l.serialNo && h('div', { class: 'muted' }, `${t('serialNo')}: ${l.serialNo}`), h('div', { class: 'muted' }, `${money(l.item.price)} × ${qtyFmt(l.qty)}`)),
         h('div', { class: 'num' }, h('strong', null, money(lineMoney(l)))),
         h('div', { class: 'qty' },
-          !l.serialNo && h('button', { type: 'button', 'aria-label': '−', onclick: () => (l.qty > 1 ? setQty(l, r2(l.qty - 1)) : null) }, '−'), input,
-          !l.serialNo && h('button', { type: 'button', 'aria-label': '+', onclick: () => setQty(l, r2(l.qty + 1)) }, '+')),
+          !l.serialNo && h('button', { type: 'button', 'aria-label': '−', onclick: () => (l.qty > 1 ? setQty(l, r4(l.qty - 1)) : null) }, '−'), input,
+          !l.serialNo && h('button', { type: 'button', 'aria-label': '+', onclick: () => setQty(l, r4(l.qty + 1)) }, '+')),
         h('button', { class: 'btn', type: 'button', 'aria-label': `${t('remove')} ${l.item.name}`, onclick: () => { if (busy) return; cart.splice(idx, 1); touch(); drawCart(); } }, t('remove'))));
     });
     const err = h('div', { id: 'pos-error' });

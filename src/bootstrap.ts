@@ -28,8 +28,10 @@ export async function bootstrapAdmin(c: pg.Client, rawEmail: string, invite: str
     let id = (await c.query('SELECT id FROM users WHERE lower(email)=$1', [email])).rows[0]?.id;
     if (!id) id = (await c.query(`INSERT INTO users (email, name) VALUES ($1,'Platform Admin') RETURNING id`, [email])).rows[0].id;
     await c.query('INSERT INTO platform_admins (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
-    await c.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [id]);   // older invitations stop working
-    await c.query(`INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1,$2, now() + interval '60 minutes')`, [id, hash]);
+    await c.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL AND token_hash <> $2', [id, hash]);   // OTHER older invitations stop working
+    // the same invitation re-submitted (every redeploy re-runs this job): refresh its window instead of failing on the unique hash
+    await c.query(`INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1,$2, now() + interval '60 minutes')
+                   ON CONFLICT (token_hash) DO UPDATE SET expires_at = now() + interval '60 minutes', used_at = NULL WHERE password_resets.user_id = EXCLUDED.user_id`, [id, hash]);
     await c.query(`INSERT INTO platform_audit (action, meta) VALUES ('platform_admin.bootstrapped', $1)`, [JSON.stringify({ userId: id })]);
     await c.query('COMMIT');
   } catch (e) { await c.query('ROLLBACK'); throw e; }

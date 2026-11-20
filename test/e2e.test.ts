@@ -227,6 +227,11 @@ describe('web UI in a real browser', () => {
     await page.click('button.prod[data-sku=EPI-SUCRE]');
     await page.fill('#w', '1.005'); await page.getByRole('button', { name: 'Valider' }).click();
     expect(hasMoney(await text(page, '#cart-total'), '7.04')).toBe(true);
+    // the +/- step buttons must keep the weighed precision: 1.005 -> 2.005 -> 1.005 (never 1.01)
+    await page.locator('[data-line=EPI-SUCRE] .qty button').last().click();
+    expect(await page.locator('[data-line=EPI-SUCRE] input').inputValue()).toBe('2.005');
+    await page.locator('[data-line=EPI-SUCRE] .qty button').first().click();
+    expect(await page.locator('[data-line=EPI-SUCRE] input').inputValue()).toBe('1.005');
     await page.click('#pay-cash');
     await page.waitForSelector('#receipt');                                          // accepted: amount equals the invoice exactly
     expect(await page.locator('#pos-error').count()).toBe(0);
