@@ -67,7 +67,10 @@ async function main() {
       throw new Error(`security posture check failed: ${JSON.stringify({ roles: roles.length, badRole, unprotected, ownedByRuntime })}`);
     }
     console.log('security posture OK: 3 non-bypass roles, all tenant tables FORCE RLS');
-    if (process.env.BOOTSTRAP_ADMIN_EMAIL) await bootstrapAdmin(c, process.env.BOOTSTRAP_ADMIN_EMAIL);
+    if (process.env.BOOTSTRAP_ADMIN_EMAIL || process.env.BOOTSTRAP_ADMIN_INVITE) {
+      if (!process.env.BOOTSTRAP_ADMIN_EMAIL || !process.env.BOOTSTRAP_ADMIN_INVITE) throw new Error('set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_INVITE together');
+      await bootstrapAdmin(c, process.env.BOOTSTRAP_ADMIN_EMAIL, process.env.BOOTSTRAP_ADMIN_INVITE);
+    }
   } catch (e) {
     await c.query('ROLLBACK').catch(() => {});
     throw e;

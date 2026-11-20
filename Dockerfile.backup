@@ -1,7 +1,7 @@
-# Scheduled backup job image: PostgreSQL 18 client tools (must match the server major version) + AWS CLI for S3-compatible storage.
+# Scheduled backup job image: PostgreSQL 18 client tools (must match the server major) + AWS CLI for S3-compatible storage (Cloudflare R2).
 FROM postgres:18
-RUN apt-get update && apt-get install -y --no-install-recommends awscli openssl ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY scripts/backup-job.sh /usr/local/bin/backup-job.sh
-RUN chmod +x /usr/local/bin/backup-job.sh
+RUN apt-get update && apt-get install -y --no-install-recommends awscli openssl ca-certificates curl && rm -rf /var/lib/apt/lists/*
+COPY scripts/backup-job.sh scripts/retention.sh scripts/restore-from-backup.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/*.sh
 USER postgres
 CMD ["/usr/local/bin/backup-job.sh"]
