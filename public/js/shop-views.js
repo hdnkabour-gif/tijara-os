@@ -140,13 +140,13 @@ export async function invoicesView(S) {
   return wrap;
 }
 function openCancel(inv, done) {
-  const err = h('div'), reason = h('input', { id: 'creason', required: true }),
-    how = h('select', { id: 'chow' }, h('option', { value: 'waste' }, t('handlingWaste')), h('option', { value: 'return' }, t('handlingReturn'))), key = newKey();
+  // "Return to stock" needs a manager approval workflow that has no UI/API yet, so the UI only offers write-off (never silently restocks).
+  const err = h('div'), reason = h('input', { id: 'creason', required: true }), key = newKey();
   const m = modal(`${t('cancelSale')} ${inv.invoice_no}`, h('form', { onsubmit: async (e) => {
     e.preventDefault();
-    try { await api('POST', `/sales/${inv.order_id}/cancel`, { reason: reason.value, committed: how.value }, { 'idempotency-key': key }); toast(t('cancelled')); m.close(); done(); }
+    try { await api('POST', `/sales/${inv.order_id}/cancel`, { reason: reason.value, committed: 'waste' }, { 'idempotency-key': key }); toast(t('cancelled')); m.close(); done(); }
     catch (ex) { err.replaceChildren(errorBox(friendly(ex))); }
-  } }, ...field(t('reason'), reason, 'creason'), ...field(t('handling'), how, 'chow'), err,
+  } }, ...field(t('reason'), reason, 'creason'), h('p', { class: 'note' }, t('handlingWaste')), err,
     h('div', { class: 'row' }, h('button', { class: 'btn danger', type: 'submit' }, t('cancelSale')), cancelBtn({ close: () => m.close() }))));
 }
 

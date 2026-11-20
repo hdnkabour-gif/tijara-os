@@ -50,6 +50,9 @@ async function main() {
       console.log(`migration applied: ${f}`);
       ran++;
     }
+    // always (idempotent): runtime reads the bookkeeping table, never writes it - regardless of what earlier migrations granted
+    await c.query('REVOKE ALL ON schema_migrations FROM app_runtime, app_platform');
+    await c.query('GRANT SELECT ON schema_migrations TO app_runtime');
     await c.query('COMMIT');
     if (ran === 0) console.log('migrations: nothing to apply');
 

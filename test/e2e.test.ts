@@ -101,6 +101,7 @@ describe('web UI in a real browser', () => {
     // 6) cancel the sale (meat is already committed -> write-off, not restocked)
     await page.locator('nav.nav').getByRole('link', { name: 'Factures' }).click();
     await page.getByRole('button', { name: 'Annuler la vente' }).click();
+    expect(await page.locator('#chow').count()).toBe(0);                                  // no "return to stock" choice without an approval workflow
     await page.fill('#creason', 'client parti'); await page.getByRole('button', { name: 'Annuler la vente' }).last().click();
     await page.waitForSelector('.badge.bad');
     await page.locator('nav.nav').getByRole('link', { name: 'Tableau de bord' }).click();
