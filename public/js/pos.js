@@ -5,6 +5,8 @@ const r2 = (n) => Math.round(n * 100) / 100;
 const r4 = (n) => Math.round(n * 1e4) / 1e4;      // weighed quantities keep up to 4 decimals (never rounded to 2 by the step buttons)
 // Exact money maths: integer arithmetic that mirrors PostgreSQL numeric round(qty*price, 2) (half up), so the amount we send always equals the invoice.
 const cents = (qty, price) => Number((BigInt(Math.round(qty * 1e4)) * BigInt(Math.round(Number(price) * 1e4)) + 500000n) / 1000000n);
+// a zero-total sale (free items) has no payment entry: the server rejects 0-amount payments but accepts an empty list
+const payFull = (method, total) => (total > 0 ? [{ method, amount: total }] : []);
 const lineMoney = (l) => cents(l.qty, l.item.price) / 100;
 const isWeighed = (i) => i.track_quantity && i.base_uom !== 'unit';
 
@@ -103,9 +105,9 @@ export async function posView(S) {
       S.branches.length > 1 && h('select', { id: 'pos-branch', 'aria-label': t('branch'), onchange: (e) => { branchId = e.target.value; touch(); } }, S.branches.map((b) => h('option', { value: b.id, selected: b.id === branchId }, b.name))),
       customers.length > 0 && [h('label', { for: 'pos-customer' }, t('customer')), sel], err,
       h('div', { class: 'paygrid' },
-        h('button', { class: 'btn primary', id: 'pay-cash', type: 'button', onclick: () => pay([{ method: 'cash', amount: T }]) }, t('payCash')),
-        h('button', { class: 'btn primary', id: 'pay-card', type: 'button', onclick: () => pay([{ method: 'card', amount: T }]) }, t('payCard')),
-        h('button', { class: 'btn primary', id: 'pay-transfer', type: 'button', onclick: () => pay([{ method: 'transfer', amount: T }]) }, t('payTransfer'))),
+        h('button', { class: 'btn primary', id: 'pay-cash', type: 'button', onclick: () => pay(payFull('cash', T)) }, t('payCash')),
+        h('button', { class: 'btn primary', id: 'pay-card', type: 'button', onclick: () => pay(payFull('card', T)) }, t('payCard')),
+        h('button', { class: 'btn primary', id: 'pay-transfer', type: 'button', onclick: () => pay(payFull('transfer', T)) }, t('payTransfer'))),
       customers.length > 0 && h('div', null, ...field(t('amountPaid'), credit, 'pos-paid'),
         h('button', { class: 'btn', id: 'pay-credit', type: 'button', onclick: () => { const p = num(credit.value); if (!customerId) return void err.replaceChildren(errorBox(t('customer'))); pay(p > 0 ? [{ method: 'cash', amount: Math.min(p, T) }] : []); } }, t('payCredit'))));
   }

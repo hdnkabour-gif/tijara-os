@@ -275,4 +275,24 @@ describe('web UI in a real browser', () => {
     expect(problems).toEqual([]);
     await ctx.close();
   }, 60_000);
+
+  it('E8: a sale whose total is zero (free items) completes without sending a 0-amount payment', async () => {
+    const shop = await createShop(api, admin, 'pro', 'Epicerie E8', ['grocery']);
+    const free = (await api.call('POST', '/items', { token: shop.ownerToken, body: { sku: 'FREE-1', name: 'Echantillon gratuit', kind: 'goods', trackQuantity: true, fulfillment: 'stock', price: 0 } })).json.id;
+    await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: free, qty: 5, unitCost: 1 } });
+    const { ctx, page, problems } = await newPage();
+    await uiLogin(page, shop.ownerEmail);
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.click('button.prod[data-sku=FREE-1]');
+    expect(hasMoney(await text(page, '#cart-total'), '0.00')).toBe(true);
+    await page.click('#pay-cash');
+    await page.waitForSelector('#receipt');
+    expect(await page.locator('#pos-error').count()).toBe(0);
+    const inv = (await api.call('GET', '/invoices', { token: shop.ownerToken })).json.invoices;
+    expect(inv).toHaveLength(1); expect(inv[0].total).toBe('0.00');
+    const st = (await api.call('GET', `/stock?branchId=${shop.branchId}`, { token: shop.ownerToken })).json.stock.find((r: any) => r.sku === 'FREE-1');
+    expect(Number(st.on_hand)).toBe(4);
+    expect(problems).toEqual([]);
+    await ctx.close();
+  }, 60_000);
 });
