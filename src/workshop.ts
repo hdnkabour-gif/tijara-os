@@ -71,7 +71,7 @@ export function registerWorkshopRoutes(k:Kit){
     const orders=(await withTenant(runtime,a.ctx,c=>c.query(`SELECT w.id,w.branch_id,w.vehicle_id,w.customer_id,w.sales_order_id,
       w.state,w.issue_note,w.quote_total,w.mileage_at_visit,w.warranty_days,w.next_service_date,w.next_service_km,
       w.created_at,w.approved_at,w.delivered_at,w.invoice_id,v.plate,v.make,v.model,
-      COALESCE(jsonb_agg(jsonb_build_object('item',i.name,'qty',l.qty,'unitPrice',l.unit_price,'lineTotal',l.line_total)
+      COALESCE(jsonb_agg(jsonb_build_object('item',l.item_name_at_quote,'sku',l.item_sku_at_quote,'qty',l.qty,'unitPrice',l.unit_price,'lineTotal',l.line_total)
           ORDER BY l.id) FILTER (WHERE l.id IS NOT NULL),'[]'::jsonb) AS lines
       FROM workshop_orders w JOIN workshop_vehicles v ON v.tenant_id=w.tenant_id AND v.id=w.vehicle_id
       LEFT JOIN workshop_order_lines l ON l.tenant_id=w.tenant_id AND l.work_order_id=w.id
