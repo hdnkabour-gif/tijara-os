@@ -86,6 +86,7 @@ BEGIN
   END IF;
   IF v_count >= v_max THEN
     IF v_col='max_users' THEN RAISE EXCEPTION 'plan user limit reached (%)',v_max USING ERRCODE='P0001'; END IF;
+    IF v_col='max_items' THEN RAISE EXCEPTION 'plan item limit reached (%)',v_max USING ERRCODE='P0001'; END IF;
     RAISE EXCEPTION 'plan quota % reached (%)',v_col,v_max USING ERRCODE='P0001';
   END IF;
   RETURN NEW;
