@@ -6,13 +6,13 @@ ALTER TABLE tenants ADD COLUMN status_reason text;
 ALTER TABLE tenants ADD COLUMN status_changed_at timestamptz;
 ALTER TABLE tenants ADD COLUMN trial_expires_at timestamptz;
 
-CREATE FUNCTION set_trial_window() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION set_trial_window() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.plan_id='trial' AND (TG_OP='INSERT' OR OLD.plan_id IS DISTINCT FROM NEW.plan_id) THEN
     NEW.trial_expires_at=now()+interval '14 days';
   END IF;
   RETURN NEW;
-END $;
+END $$;
 CREATE TRIGGER trg_tenant_trial BEFORE INSERT OR UPDATE OF plan_id ON tenants
   FOR EACH ROW EXECUTE FUNCTION set_trial_window();
 UPDATE tenants SET trial_expires_at=now()+interval '14 days' WHERE plan_id='trial' AND trial_expires_at IS NULL;
