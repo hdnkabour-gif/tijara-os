@@ -5,6 +5,7 @@ import { platformView } from './platform.js';
 import { customersView, dashboardView, invoicesView, itemsView, stockView } from './shop-views.js';
 import { invoiceView, journalView, rolesView, settingsView, teamView } from './admin-views.js';
 import { posView } from './pos.js';
+import { vehiclesView, workshopView, workshopRemindersView } from './workshop-views.js';
 
 const root = document.getElementById('app');
 const S = { me: null, tenant: null, branches: [], route: '' };
@@ -18,6 +19,9 @@ const ROUTES = [
   { path: 'stock', label: 'nav_stock', show: () => can('stock.view'), view: stockView },
   { path: 'customers', label: 'nav_customers', show: () => can('customers.view'), view: customersView },
   { path: 'invoices', label: 'nav_invoices', show: () => can('sale.view'), view: invoicesView },
+  { path: 'vehicles', label: 'nav_vehicles', show: () => can('workshop.view'), view: vehiclesView },
+  { path: 'workshop', label: 'nav_workshop', show: () => can('workshop.view'), view: workshopView },
+  { path: 'reminders', label: 'nav_reminders', show: () => can('workshop.view'), view: workshopRemindersView },
   { path: 'users', label: 'nav_users', show: () => can('users.manage'), view: teamView },
   { path: 'roles', label: 'nav_roles', show: () => can('users.manage'), view: rolesView },
   { path: 'settings', label: 'nav_settings', show: () => can('settings.manage') || can('branches.manage'), view: settingsView },
