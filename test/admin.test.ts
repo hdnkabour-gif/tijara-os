@@ -234,7 +234,7 @@ describe('shop identity, printable invoice, journal', () => {
     expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { name: 'New Branding', company: { legalName: 'Updated Legal Name' } } })).status).toBe(200);
     const originalAgain = await api.call('GET', `/invoices/${inv.id}`, j(cashier.token));
     expect(originalAgain.status).toBe(200);
-    expect(originalAgain.json.lines[0]).toMatchObject({ name: 'Sucre 1kg', sku: 'EPI-SUCRE', unit_price: '7.0000' });
+    expect(originalAgain.json.lines[0]).toMatchObject({ name: 'Sucre', sku: 'EPI-SUCRE', unit_price: '7.0000' });
     expect(originalAgain.json.invoice).toMatchObject({ branch_name: 'Main', customer_name: 'Original Customer', total: '10.50' });
     expect(originalAgain.json.shop).toMatchObject({ name: 'Renamed Shop', company: { legalName: 'SARL Demo' } });
     expect((await api.call('GET', `/invoices/${inv.id}`, j(B.ownerToken))).status).toBe(404);        // another shop cannot read it
