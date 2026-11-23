@@ -73,6 +73,39 @@ describe('web UI in a real browser', () => {
     await mobile.ctx.close();
   });
 
+  it('E11: kitchen dashboard confirms a real order flow and fits a Moroccan mobile screen in Arabic', async () => {
+    const shop=await createShop(api,admin,'pro','Grill Pilot',['butcher','grill']);
+    const grillItem=(await api.call('GET','/items',{token:shop.ownerToken})).json.items.find((x:any)=>x.sku==='GRL-CUISSON');
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,shop.ownerEmail);
+    await page.waitForSelector('#tile-sales');
+    await page.locator('nav.nav').getByRole('link',{name:'Cuisine & grill'}).click();
+    await page.getByRole('button',{name:/Envoyer à la cuisine/}).click();
+    await page.fill('#grill-label','Table 7');
+    await page.locator('#grill-item').selectOption(grillItem.id);
+    await page.fill('#grill-qty','1');
+    await page.locator('.modal button[type=submit]').click();
+    await page.getByText('Table 7').waitFor();
+    await page.getByRole('button',{name:'Démarrer la préparation'}).click();
+    await page.getByRole('button',{name:'Marquer prête'}).click();
+    await page.getByRole('button',{name:'Encaisser'}).click();
+    await page.locator('.modal button[type=submit]').click();
+    await page.getByText('Aucune opération à afficher').waitFor();
+    expect((await api.call('GET','/invoices',{token:shop.ownerToken})).json.invoices).toHaveLength(1);
+    expect(problems).toEqual([]);
+    await ctx.close();
+
+    const mobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(mobile.page,shop.ownerEmail);
+    await mobile.page.waitForSelector('#tile-sales');
+    await mobile.page.locator('nav.nav').getByRole('link',{name:'المطبخ والمشوي'}).click();
+    expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
+    expect(await mobile.page.getByText('طلبات التحضير').isVisible()).toBe(true);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    expect(mobile.problems).toEqual([]);
+    await mobile.ctx.close();
+  });
+
   it('E1 (desktop, FR): platform admin creates a shop by activity; owner runs a full weighed sale with grilling; stock, dashboard and cancellation reflect it', async () => {
     const { ctx, page, problems } = await newPage();
     // 1) platform administrator creates the shop through the UI
