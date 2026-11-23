@@ -51,6 +51,7 @@ export function friendly(e) {
   if (!(e instanceof ApiError)) return t('errGeneric');
   if (e.status === 401 && e.code === 'UNAUTHENTICATED') return e.message;
   if (e.status === 403) return `${t('errForbidden')}: ${e.message}`;
+  if (e.code === 'IN_USE') return t('inUseHint');
   if (e.code === 'INSUFFICIENT_STOCK' || e.code === 'INVALID_STATE') return `${t('errStock')} — ${e.message}`;
   return e.message || t('errGeneric');
 }
@@ -74,6 +75,15 @@ export function modal(title, content, { onClose } = {}) {
   return { close };
 }
 
+/** Confirmation dialog (no window.confirm: it is blocked in some embedded browsers). Resolves true/false. */
+export function confirmBox(message, { danger = true, ok = t('yes') } = {}) {
+  return new Promise((resolve) => {
+    let done = false; const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const m = modal(message, h('div', { class: 'row' },
+      h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), id: 'confirm-ok', type: 'button', onclick: () => { finish(true); m.close(); } }, ok),
+      h('button', { class: 'btn', type: 'button', onclick: () => { finish(false); m.close(); } }, t('cancel'))), { onClose: () => finish(false) });
+  });
+}
 export const field = (label, input, id) => [h('label', { for: id }, label), input];
 export function errorBox(msg) { return h('div', { class: 'error', role: 'alert' }, msg); }
 export const num = (v) => { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : NaN; };

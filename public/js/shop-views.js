@@ -1,4 +1,4 @@
-import { api, errorBox, field, friendly, h, modal, newKey, num, toast, put } from './lib.js';
+import { api, confirmBox, errorBox, field, friendly, h, modal, newKey, num, toast, put } from './lib.js';
 import { dateFmt, money, qtyFmt, t, uom } from './i18n.js';
 
 const can = (S, p) => S.me.permissions.includes(p);
@@ -36,17 +36,42 @@ const PRESETS = {
   type_serial: { kind: 'goods', trackQuantity: true, fulfillment: 'stock', baseUom: 'unit', serialTracking: true },
   type_service: { kind: 'service', trackQuantity: false, fulfillment: 'none', baseUom: 'unit' },
 };
-export async function itemsView(S) {
+export async function itemsView(S, query) {
   const { items } = await api('GET', '/items');
+  const showArchived = query?.get('archived') === '1';
   const wrap = h('div');
-  const hasSample = items.some((i) => i.attributes?.sample);
-  const rows = items.map((i) => h('tr', null, h('td', null, i.sku), h('td', null, i.name, i.attributes?.sample && h('span', { class: 'badge sample' }, ` ${t('sample')}`)),
-    h('td', null, t(typeOf(i))), h('td', { class: 'num' }, money(i.price))));
+  const reload = () => itemsView(S, query).then((v) => wrap.replaceWith(v));
+  const list = items.filter((i) => showArchived || i.active);
+  const hasSample = list.some((i) => i.attributes?.sample);
+  const manage = can(S, 'catalog.manage');
+  const rows = list.map((i) => h('tr', { 'data-sku': i.sku, class: i.active ? '' : 'muted' }, h('td', null, i.sku),
+    h('td', null, i.name, i.attributes?.sample && h('span', { class: 'badge sample' }, ` ${t('sample')}`), !i.active && h('span', { class: 'badge bad' }, ` ${t('archived')}`)),
+    h('td', null, t(typeOf(i))), h('td', { class: 'num' }, money(i.price)),
+    h('td', null, manage && h('div', { class: 'row-actions' },
+      h('button', { class: 'btn', type: 'button', 'data-action': 'edit', onclick: () => editItem(i, reload) }, t('edit')),
+      h('button', { class: 'btn danger', type: 'button', 'data-action': 'delete', onclick: async () => {
+        if (!(await confirmBox(`${t('confirmDelete')} ${i.name}`))) return;
+        try { await api('DELETE', `/items/${i.id}`); toast(t('deleted')); reload(); } catch (e) { toast(friendly(e), true); }
+      } }, t('del'))))));
   put(wrap, h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_items')),
-    can(S, 'catalog.manage') && h('button', { class: 'btn primary', id: 'new-item', type: 'button', onclick: () => openItem(() => itemsView(S).then((v) => wrap.replaceWith(v))) }, `+ ${t('newItem')}`)),
+    h('label', { class: 'chip', for: 'show-archived' }, h('input', { type: 'checkbox', id: 'show-archived', checked: showArchived, onchange: (e) => { location.hash = e.target.checked ? '#/items?archived=1' : '#/items'; } }), ` ${t('showArchived')}`),
+    manage && h('button', { class: 'btn primary', id: 'new-item', type: 'button', onclick: () => openItem(reload) }, `+ ${t('newItem')}`)),
     hasSample && h('p', { class: 'note' }, t('sampleNote')),
-    h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('sku'), t('name'), t('kind'), t('price')].map((x) => h('th', null, x)))), h('tbody', null, rows))));
+    h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('sku'), t('name'), t('kind'), t('price'), manage ? t('actions') : ''].map((x) => h('th', null, x)))), h('tbody', null, rows))));
   return wrap;
+}
+function editItem(i, done) {
+  const err = h('div'), name = h('input', { id: 'ename', value: i.name, required: true }), price = h('input', { id: 'eprice', inputmode: 'decimal', value: String(Number(i.price)) }),
+    active = h('input', { type: 'checkbox', id: 'eactive', checked: i.active });
+  const m = modal(`${t('edit')} — ${i.sku}`, h('form', { onsubmit: async (e) => {
+    e.preventDefault();
+    const p = num(price.value);
+    if (Number.isNaN(p) || p < 0) return void err.replaceChildren(errorBox(t('price')));
+    try { await api('PATCH', `/items/${i.id}`, { name: name.value, price: p, active: active.checked }); m.close(); toast(t('saved')); done(); }
+    catch (ex) { err.replaceChildren(errorBox(friendly(ex))); }
+  } }, ...field(t('name'), name, 'ename'), ...field(t('price'), price, 'eprice'),
+    h('div', { class: 'perm-row' }, active, h('label', { for: 'eactive' }, t('activeLabel'))), err,
+    h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, t('save')), cancelBtn({ close: () => m.close() }))));
 }
 function openItem(done) {
   const err = h('div'), sku = h('input', { id: 'isku', required: true }), name = h('input', { id: 'iname', required: true }),
@@ -113,26 +138,39 @@ async function openReceive(S, getBranch, done) {
 // ───────────── customers ─────────────
 export async function customersView(S) {
   const { customers } = await api('GET', '/customers'); const wrap = h('div');
+  const reload = () => customersView(S).then((v) => wrap.replaceWith(v));
+  const manage = can(S, 'customers.manage');
   put(wrap, h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('nav_customers')),
-    can(S, 'customers.manage') && h('button', { class: 'btn primary', type: 'button', onclick: () => openCustomer(() => customersView(S).then((v) => wrap.replaceWith(v))) }, `+ ${t('add')}`)),
-    h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('name'), t('phone'), t('creditLimit'), t('balance')].map((x) => h('th', null, x)))),
-      h('tbody', null, customers.map((c) => h('tr', null, h('td', null, c.name), h('td', null, c.phone ?? ''), h('td', { class: 'num' }, money(c.credit_limit)), h('td', { class: 'num' }, money(c.balance))))))));
+    manage && h('button', { class: 'btn primary', id: 'new-customer', type: 'button', onclick: () => openCustomer(reload) }, `+ ${t('add')}`)),
+    h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('name'), t('phone'), t('creditLimit'), t('balance'), manage ? t('actions') : ''].map((x) => h('th', null, x)))),
+      h('tbody', null, customers.map((c) => h('tr', { 'data-customer': c.name, class: c.active ? '' : 'muted' },
+        h('td', null, c.name, !c.active && h('span', { class: 'badge bad' }, ` ${t('archived')}`)), h('td', null, c.phone ?? ''), h('td', { class: 'num' }, money(c.credit_limit)), h('td', { class: 'num' }, money(c.balance)),
+        h('td', null, manage && h('div', { class: 'row-actions' },
+          h('button', { class: 'btn', type: 'button', 'data-action': 'edit', onclick: () => openCustomer(reload, c) }, t('edit')),
+          h('button', { class: 'btn danger', type: 'button', 'data-action': 'delete', onclick: async () => {
+            if (!(await confirmBox(`${t('confirmDelete')} ${c.name}`))) return;
+            try { await api('DELETE', `/customers/${c.id}`); toast(t('deleted')); reload(); } catch (e) { toast(friendly(e), true); }
+          } }, t('del'))))))))));
   return wrap;
 }
-function openCustomer(done) {
-  const err = h('div'), name = h('input', { id: 'cname', required: true }), phone = h('input', { id: 'cphone', type: 'tel' }), limit = h('input', { id: 'climit', inputmode: 'decimal', value: '0' });
-  const m = modal(t('add'), h('form', { onsubmit: async (e) => {
+function openCustomer(done, c = null) {
+  const err = h('div'), name = h('input', { id: 'cname', required: true, value: c?.name ?? '' }), phone = h('input', { id: 'cphone', type: 'tel', value: c?.phone ?? '' }),
+    address = h('input', { id: 'caddr', value: c?.address ?? '' }), limit = h('input', { id: 'climit', inputmode: 'decimal', value: String(Number(c?.credit_limit ?? 0)) }),
+    active = h('input', { type: 'checkbox', id: 'cactive', checked: c ? c.active : true });
+  const m = modal(c ? `${t('edit')} — ${c.name}` : t('add'), h('form', { onsubmit: async (e) => {
     e.preventDefault();
-    try { await api('POST', '/customers', { name: name.value, phone: phone.value || undefined, creditLimit: num(limit.value) }); m.close(); done(); }
+    const body = { name: name.value, phone: phone.value || undefined, address: address.value || undefined, creditLimit: num(limit.value) };
+    try { if (c) await api('PATCH', `/customers/${c.id}`, { ...body, active: active.checked }); else await api('POST', '/customers', body); m.close(); toast(t('saved')); done(); }
     catch (ex) { err.replaceChildren(errorBox(friendly(ex))); }
-  } }, ...field(t('name'), name, 'cname'), ...field(t('phone'), phone, 'cphone'), ...field(t('creditLimit'), limit, 'climit'), err,
+  } }, ...field(t('name'), name, 'cname'), ...field(t('phone'), phone, 'cphone'), ...field(t('address'), address, 'caddr'), ...field(t('creditLimit'), limit, 'climit'),
+    c && h('div', { class: 'perm-row' }, active, h('label', { for: 'cactive' }, t('activeLabel'))), err,
     h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, t('save')), cancelBtn({ close: () => m.close() }))));
 }
 
 // ───────────── invoices ─────────────
 export async function invoicesView(S) {
   const { invoices } = await api('GET', '/invoices'); const wrap = h('div');
-  const rows = invoices.map((i) => h('tr', null, h('td', null, i.invoice_no), h('td', null, dateFmt(i.created_at)), h('td', { class: 'num' }, money(i.total)), h('td', { class: 'num' }, money(i.paid)),
+  const rows = invoices.map((i) => h('tr', null, h('td', null, h('a', { href: `#/invoice?id=${i.id}`, 'data-invoice': i.invoice_no }, i.invoice_no)), h('td', null, dateFmt(i.created_at)), h('td', { class: 'num' }, money(i.total)), h('td', { class: 'num' }, money(i.paid)),
     h('td', null, h('span', { class: 'badge ' + (i.status === 'issued' ? 'ok' : 'bad') }, t(i.status))),
     h('td', null, can(S, 'sale.void') && i.status === 'issued' && h('button', { class: 'btn', type: 'button', 'data-cancel': i.invoice_no, onclick: () => openCancel(i, () => invoicesView(S).then((v) => wrap.replaceWith(v))) }, t('cancelSale')))));
   put(wrap, h('h1', null, t('invoices')), h('div', { class: 'card tablewrap' }, h('table', null,
@@ -150,27 +188,3 @@ function openCancel(inv, done) {
     h('div', { class: 'row' }, h('button', { class: 'btn danger', type: 'submit' }, t('cancelSale')), cancelBtn({ close: () => m.close() }))));
 }
 
-// ───────────── team ─────────────
-export async function usersView(S) {
-  const [{ users }, { roles }] = await Promise.all([api('GET', '/users'), api('GET', '/roles')]); const wrap = h('div');
-  put(wrap, h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('users')),
-    h('button', { class: 'btn primary', type: 'button', onclick: () => openUser(S, roles, () => usersView(S).then((v) => wrap.replaceWith(v))) }, `+ ${t('newUser')}`)),
-    h('div', { class: 'card tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('name'), t('email'), t('role'), t('branches')].map((x) => h('th', null, x)))),
-      h('tbody', null, users.map((u) => h('tr', null, h('td', null, u.name), h('td', null, u.email), h('td', null, u.role),
-        h('td', null, u.branch_ids.length ? u.branch_ids.map((id) => S.branches.find((b) => b.id === id)?.name ?? '').join(', ') : t('allBranches'))))))));
-  return wrap;
-}
-function openUser(S, roles, done) {
-  const err = h('div'), name = h('input', { id: 'uname', required: true }), email = h('input', { id: 'uemail', type: 'email', required: true }),
-    pw = h('input', { id: 'upw', type: 'password', autocomplete: 'new-password', required: true, minlength: '10' }),
-    role = h('select', { id: 'urole' }, roles.map((r) => h('option', { value: r }, r)));
-  const boxes = S.branches.map((b) => ({ id: b.id, box: h('input', { type: 'checkbox', id: `ub-${b.id}` }) }));
-  const m = modal(t('newUser'), h('form', { onsubmit: async (e) => {
-    e.preventDefault();
-    try { await api('POST', '/users', { name: name.value, email: email.value, password: pw.value, roleName: role.value, branchIds: boxes.filter((b) => b.box.checked).map((b) => b.id) }); m.close(); done(); }
-    catch (ex) { err.replaceChildren(errorBox(friendly(ex))); }
-  } }, ...field(t('name'), name, 'uname'), ...field(t('email'), email, 'uemail'), ...field(t('password'), pw, 'upw'), h('p', { class: 'muted' }, t('pwHint')),
-    ...field(t('role'), role, 'urole'), h('label', null, t('branches')),
-    h('div', { class: 'chips' }, S.branches.map((b, i) => h('label', { class: 'chip', for: `ub-${b.id}` }, boxes[i].box, ` ${b.name}`))), err,
-    h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, t('create')), cancelBtn({ close: () => m.close() }))));
-}

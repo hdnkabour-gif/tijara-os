@@ -188,3 +188,15 @@ tbody tr:hover{background:#fafcfb}
 }
 @media(max-width:380px){.brand-context{max-width:10ch}.workspace .topbar{gap:.35rem}.topbar-actions{gap:.2rem}.workspace .topbar button{padding:0 .5rem}}
 @media(prefers-reduced-motion:reduce){.btn,.prod,.workspace .nav a,button,input,select,textarea{transition:none!important}}
+
+.perm-groups{display:grid;gap:.8rem}.perm-group{border:1px solid var(--line);border-radius:10px;padding:.6rem .8rem}
+.perm-group h3{font-size:.95rem;margin:.1rem 0 .4rem}.perm-row{display:flex;align-items:center;gap:.5rem;min-height:36px}.perm-row input{width:20px;min-height:20px}
+.perm-row label{margin:0;font-weight:500;flex:1}
+.role-card{border:1px solid var(--line);border-radius:12px;padding:.8rem 1rem;margin-bottom:.8rem;background:#fff}
+.role-card .chips{margin:.5rem 0 0}.chip.static{cursor:default;min-height:30px;padding:0 .6rem;font-size:.85rem;background:#f1f4f8}
+.row-actions{display:flex;gap:.4rem;flex-wrap:wrap}.row-actions .btn{min-height:38px;padding:0 .7rem;font-size:.9rem}
+.print-only{display:none}
+.invoice-sheet{background:#fff;border:1px solid var(--line);border-radius:12px;padding:1.4rem;max-width:760px;margin:0 auto}
+.invoice-sheet h1{margin:0}.invoice-sheet .meta{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin:.6rem 0}
+@media print{body{background:#fff}.topbar,.nav,.no-print,.toast,.modal-back{display:none!important}main{padding:0!important;max-width:none!important}
+.invoice-sheet{border:0;padding:0;max-width:none}.card{border:0}.print-only{display:block}}

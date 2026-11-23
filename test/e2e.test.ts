@@ -347,4 +347,112 @@ describe('web UI in a real browser', () => {
     expect(problems).toEqual([]);
     await ctx.close();
   }, 60_000);
+
+  it('E9 (UI): edit price, archive and protected delete of products; customers edit; invoice detail with company identity and print', async () => {
+    const shop = await createShop(api, admin, 'pro', 'Admin UI', ['grocery']);
+    const items = (await api.call('GET', '/items', { token: shop.ownerToken })).json.items;
+    const oil = items.find((i: any) => i.sku === 'EPI-HUILE').id;
+    await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: oil, qty: 10, unitCost: 5 } });
+    const { ctx, page, problems } = await newPage();
+    await uiLogin(page, shop.ownerEmail);
+    const nav = (name: string) => page.locator('nav.nav').getByRole('link', { name, exact: true }).click();
+    // settings: company identity
+    await nav('Paramètres');
+    await page.fill('#s-legal', 'SARL Démo'); await page.fill('#s-ice', '001234567000089'); await page.fill('#s-footer', 'Merci et à bientôt');
+    await page.locator('#company-form button[type=submit]').click();
+    await page.waitForSelector('.toast');
+    // products: edit price, protected delete (has stock history), archive, delete unused
+    await nav('Produits & services');
+    await page.locator('tr[data-sku=EPI-HUILE] [data-action=edit]').click();
+    await page.fill('#eprice', '21'); await page.getByRole('button', { name: 'Enregistrer' }).click();
+    await page.waitForSelector('tr[data-sku=EPI-HUILE] >> text=/21,00/');
+    await page.locator('tr[data-sku=EPI-HUILE] [data-action=delete]').click(); await page.click('#confirm-ok');
+    await page.waitForSelector('.toast.err');
+    expect(await text(page, '.toast.err')).toContain('archivez-le');
+    await page.locator('tr[data-sku=EPI-SUCRE] [data-action=delete]').click(); await page.click('#confirm-ok');     // never used -> really deleted
+    await page.waitForFunction(() => !document.querySelector('tr[data-sku=EPI-SUCRE]'));
+    await page.locator('tr[data-sku=EPI-LAIT] [data-action=edit]').click();
+    await page.uncheck('#eactive'); await page.getByRole('button', { name: 'Enregistrer' }).click();               // archive
+    await page.waitForFunction(() => !document.querySelector('tr[data-sku=EPI-LAIT]'));
+    await page.check('#show-archived');
+    await page.waitForSelector('tr[data-sku=EPI-LAIT] .badge.bad');
+    // POS: new price, archived product gone
+    await nav('Caisse');
+    await page.waitForSelector('button.prod[data-sku=EPI-HUILE]');
+    expect(await page.locator('button.prod[data-sku=EPI-LAIT]').count()).toBe(0);
+    await page.click('button.prod[data-sku=EPI-HUILE]');
+    expect(hasMoney(await text(page, '#cart-total'), '21.00')).toBe(true);
+    await page.click('#pay-cash'); await page.waitForSelector('#receipt');
+    // invoice detail: lines, total, company identity, print button
+    await nav('Factures');
+    await page.locator('a[data-invoice]').first().click();
+    await page.waitForSelector('#invoice-sheet');
+    const sheet = await text(page, '#invoice-sheet');
+    expect(sheet).toContain('SARL Démo'); expect(sheet).toContain('ICE 001234567000089'); expect(sheet).toContain('Huile 1L'); expect(sheet).toContain('Merci et à bientôt');
+    expect(hasMoney(await text(page, '#invoice-total'), '21.00')).toBe(true);
+    expect(await page.locator('#print-btn').isVisible()).toBe(true);
+    await page.emulateMedia({ media: 'print' });
+    expect(await page.locator('nav.nav').isVisible()).toBe(false);                                         // print layout hides the app chrome
+    expect(await page.locator('#print-btn').isVisible()).toBe(false);
+    await page.emulateMedia({ media: 'screen' });
+    // customers: edit and archive
+    await api.call('POST', '/customers', { token: shop.ownerToken, body: { name: 'Client Test' } });
+    await nav('Clients');
+    await page.locator('tr[data-customer="Client Test"] [data-action=edit]').click();
+    await page.fill('#cphone', '0600000001'); await page.uncheck('#cactive'); await page.getByRole('button', { name: 'Enregistrer' }).click();
+    await page.waitForSelector('tr[data-customer="Client Test"] .badge.bad');
+    await noLeaks(page);
+    expect(problems).toEqual([]);
+    await ctx.close();
+  }, 120_000);
+
+  it('E10 (UI): team and roles — a custom role with limited permissions, a new staff member, deactivate, reset password, journal', async () => {
+    const shop = await createShop(api, admin, 'pro', 'Team UI', ['butcher']);
+    const { ctx, page, problems } = await newPage();
+    await uiLogin(page, shop.ownerEmail);
+    const nav = (name: string) => page.locator('nav.nav').getByRole('link', { name, exact: true }).click();
+    // custom role: stock only
+    await nav('Rôles & permissions');
+    await page.click('#new-role');
+    await page.fill('#rname', 'magasinier');
+    for (const p of ['catalog.view', 'stock.view', 'stock.receive']) await page.check(`#perm-${p.replace('.', '\\.')}`);
+    await page.getByRole('button', { name: 'Enregistrer' }).click();
+    await page.waitForSelector('[data-role=magasinier]');
+    // new staff member with that role
+    await nav('Équipe');
+    await page.click('#new-user');
+    const email = `mag.${uniq('m')}@test.local`;
+    await page.fill('#uname', 'Magasinier Test'); await page.fill('#uemail', email); await page.fill('#upw', 'Magasin-Pass-2026');
+    await page.selectOption('#urole', 'magasinier');
+    await page.getByRole('button', { name: 'Créer' }).click();
+    await page.waitForSelector(`tr[data-user="${email}"]`);
+    // reset their password from the team page
+    await page.locator(`tr[data-user="${email}"] [data-action=password]`).click();
+    await page.fill('#rpw', 'Reset-By-Owner-77'); await page.getByRole('button', { name: 'Enregistrer' }).click();
+    await page.waitForSelector('.toast');
+    // the staff member sees ONLY what the role allows
+    const staffPage = await newPage();
+    await uiLogin(staffPage.page, email, 'Reset-By-Owner-77');
+    await staffPage.page.waitForSelector('nav.nav a');
+    const links = await staffPage.page.locator('nav.nav a').allInnerTexts();
+    expect(links).toEqual(expect.arrayContaining(['Produits & services', 'Stock']));
+    for (const forbidden of ['Caisse', 'Équipe', 'Paramètres', 'Factures', 'Rôles & permissions', 'Journal']) expect(links).not.toContain(forbidden);
+    await staffPage.page.goto(`${base}/app/#/users`);                                                       // typing a forbidden URL does not open it
+    await staffPage.page.waitForSelector('nav.nav a[aria-current=page]');
+    expect(await staffPage.page.locator('nav.nav a[aria-current=page]').innerText()).not.toBe('Équipe');
+    // owner deactivates them: their next action is refused
+    await page.locator(`tr[data-user="${email}"] [data-action=toggle]`).click();
+    await page.waitForSelector(`tr[data-user="${email}"] .badge.bad`);
+    const r = await staffPage.page.evaluate(async () => (await fetch('/items', { headers: { 'x-requested-with': 'tijara-web' } })).status);
+    expect(r).toBeGreaterThanOrEqual(400);
+    // journal shows what happened, with the actor, and no password
+    await nav('Journal');
+    await page.waitForSelector('code');
+    const journal = await page.locator('main').innerText();
+    expect(journal).toContain('role.created'); expect(journal).toContain('user.password_reset'); expect(journal).toContain('user.updated');
+    expect(journal).not.toContain('Reset-By-Owner-77');
+    await noLeaks(page);
+    expect(problems).toEqual([]); expect(staffPage.problems).toEqual([]);
+    await staffPage.ctx.close(); await ctx.close();
+  }, 120_000);
 });

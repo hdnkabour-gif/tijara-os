@@ -166,6 +166,8 @@ describe('shop identity, printable invoice, journal', () => {
     const manager = await staff(api, A, 'manager'), cashier = await staff(api, A, 'cashier');
     expect((await api.call('PATCH', '/tenant', { ...j(manager.token), body: { company: { legalName: 'X' } } })).status).toBe(403);
     expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { name: 'Renamed Shop', company: { legalName: 'SARL Demo', address: '1 Rue Test', phone: '0500000000', ice: '001234567000089', if: '12345', rc: '999', footer: 'Merci !' } } })).status).toBe(200);
+    expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { name: 'Renamed Shop', company: { legalName: 'SARL Demo', address: '', phone: '', ice: '001234567000089', if: '', rc: '', footer: 'Merci !' } } })).status).toBe(200);   // empty optional fields are fine
+    expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { company: { legalName: 'x'.repeat(201) } } })).status).toBe(400);
     const t = (await api.call('GET', '/tenant', j(cashier.token))).json;
     expect(t.name).toBe('Renamed Shop'); expect(t.company).toMatchObject({ legalName: 'SARL Demo', ice: '001234567000089', footer: 'Merci !' });
     const sugar = (await api.call('GET', '/items', j(A.ownerToken))).json.items.find((i: any) => i.sku === 'EPI-SUCRE').id;

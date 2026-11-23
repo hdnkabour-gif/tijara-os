@@ -15,6 +15,12 @@ async function guardedDelete<T>(what: string, fn: () => Promise<T>): Promise<T> 
     throw e;
   }
 }
+/** optional free text: empty is allowed (clears the field), too long is not */
+const optText = (v: unknown, name: string, max: number): string => {
+  if (v == null) return '';
+  if (typeof v !== 'string' || v.length > max) throw bad(`${name} must be text (max ${max} chars)`);
+  return v.trim();
+};
 const optBool = (v: unknown, name: string) => { if (v == null) return undefined; if (typeof v !== 'boolean') throw bad(`${name} must be boolean`); return v; };
 
 export function registerAdminRoutes(k: Kit) {
@@ -219,8 +225,8 @@ export function registerAdminRoutes(k: Kit) {
   add('PATCH', '/tenant', 'session', async (rc) => {
     const a = await authorize(rc, 'settings.manage'), c0 = rc.body.company ?? {};
     const company = {
-      legalName: optStr(c0.legalName, 'legalName', 200) ?? '', address: optStr(c0.address, 'address', 300) ?? '', phone: optStr(c0.phone, 'phone', 40) ?? '',
-      ice: optStr(c0.ice, 'ice', 30) ?? '', if: optStr(c0.if, 'if', 30) ?? '', rc: optStr(c0.rc, 'rc', 30) ?? '', footer: optStr(c0.footer, 'footer', 300) ?? '',
+      legalName: optText(c0.legalName, 'legalName', 200), address: optText(c0.address, 'address', 300), phone: optText(c0.phone, 'phone', 40),
+      ice: optText(c0.ice, 'ice', 30), if: optText(c0.if, 'if', 30), rc: optText(c0.rc, 'rc', 30), footer: optText(c0.footer, 'footer', 300),
     };
     await withTenant(runtime, a.ctx, async (c) => {
       await c.query('SELECT tenant_update_settings($1,$2::jsonb)', [optStr(rc.body.name, 'name', 100) ?? null, JSON.stringify(company)]);
