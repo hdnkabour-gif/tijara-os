@@ -1,6 +1,9 @@
 import { afterAll,beforeAll,describe,expect,it } from 'vitest';
 import { Api,createShop,key,platformAdmin,staff,startApp,uniq,PW } from './api-helpers.js';
 
+import { withTenant } from '../src/db.js';
+import { owner } from './helpers.js';
+
 let api: Api, admin: {token:string};
 beforeAll(async()=>{api=await startApp();admin=await platformAdmin(api);});
 afterAll(async()=>{await api.close();});
@@ -76,4 +79,20 @@ describe('Platform subscriptions, suspension, and limits',()=>{
     expect((await control(A.tenantId,{limits:{max_customers:null,max_monthly_orders:null}})).status).toBe(200);
     expect((await api.call('POST','/customers',{...token(A.ownerToken),body:{name:'Client Z'}})).status).toBe(201);
   });
+  it('PC4: expired trial is blocked but upgrading restores full shop data',async()=>{
+    const A=await createShop(api,admin,'trial','Temporary Trial',['grocery']);
+    const items=(await api.call('GET','/items',token(A.ownerToken))).json.items.map((x:any)=>x.id).sort();
+    await withTenant(owner,{tenantId:A.tenantId},async(c)=>{
+      await c.query("UPDATE tenants SET trial_expires_at=now()-interval '1 day' WHERE id=$1",[A.tenantId]);
+    });
+    const blocked=await api.call('GET','/items',token(A.ownerToken));
+    expect(blocked.status).toBe(423); expect(blocked.json.error.code).toBe('TRIAL_EXPIRED');
+    const publicTenant=await api.call('GET','/tenant',token(A.ownerToken));
+    expect(publicTenant.json.status).toBe('trial_expired');
+    expect((await control(A.tenantId,{plan:'basic'})).status).toBe(200);
+    const restored=await api.call('GET','/items',token(A.ownerToken));
+    expect(restored.status).toBe(200);
+    expect(restored.json.items.map((x:any)=>x.id).sort()).toEqual(items);
+  });
+
 });
