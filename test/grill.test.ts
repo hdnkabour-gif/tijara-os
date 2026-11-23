@@ -29,7 +29,8 @@ describe('Phase B grill, purchases, cash and production', () => {
     expect((await api.call('POST',`/grill/orders/${id}/start`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{}})).status).toBe(200);
     expect((await api.call('POST',`/grill/orders/${id}/start`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{}})).status).toBe(409);
     expect((await api.call('POST',`/grill/orders/${id}/ready`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{}})).status).toBe(200);
-    expect((await api.call('GET',`/grill/orders?branchId=${A.branchId}`,withToken(B.ownerToken))).status).toBe(404);
+    const foreignQueue = await api.call('GET',`/grill/orders?branchId=${A.branchId}`,withToken(B.ownerToken));
+    expect(foreignQueue.status).toBe(200); expect(foreignQueue.json.orders).toHaveLength(0);
     const paid=await api.call('POST',`/grill/orders/${id}/pay`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{payments:[{method:'cash',amount:180}]}});
     expect(paid.status).toBe(201);
     const invoices=(await api.call('GET','/invoices',withToken(A.ownerToken))).json.invoices;
