@@ -73,9 +73,20 @@ async function render() {
     S.route = current.path;
   }
   const main = h('main', { id: 'main' }, h('p', { class: 'muted' }, t('loading')));
-  root.appendChild(h('div', { class: 'shell' },
-    h('div', { class: 'topbar' }, h('div', { class: 'brand' }, S.tenant?.name ?? t('app')), langToggle(), h('button', { type: 'button', onclick: logout }, t('logout'))),
-    h('nav', { class: 'nav', 'aria-label': 'navigation' }, visible.map((r) => h('a', { href: `#/${r.path}`, ...(r.path === current.path ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
+  root.appendChild(h('div', { class: 'shell workspace' },
+    h('div', { class: 'topbar' },
+      h('div', { class: 'brand-lockup' },
+        h('span', { class: 'brandmark', 'aria-hidden': 'true' }, 'ت'),
+        h('div', { class: 'brand-copy' },
+          h('strong', { class: 'brand-title' }, t('app')),
+          h('span', { class: 'brand-context' }, S.tenant?.name ?? t('platform')))),
+      h('div', { class: 'topbar-actions' },
+        h('span', { class: 'environment-badge' }, t('demoBadge')),
+        langToggle(),
+        h('button', { type: 'button', onclick: logout }, t('logout')))),
+    h('nav', { class: 'nav', 'aria-label': 'navigation' },
+      h('span', { class: 'nav-section-label' }, t('workspaceNav')),
+      visible.map((r) => h('a', { href: `#/${r.path}`, ...(r.path === current.path ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
     main));
   try {
     const view = await current.view(S, query);

@@ -23,6 +23,11 @@ const fr = {
   created: 'Établissement créé', itemsCount: 'Articles', usersCount: 'Utilisateurs',
   errNetwork: 'Erreur réseau', errGeneric: 'Une erreur est survenue', errForbidden: 'Action non autorisée', errStock: 'Stock insuffisant ou état invalide',
   language: 'Langue', demoNote: 'Environnement de test : n’entrez aucune donnée réelle.',
+  demoBadge: 'BÊTA', workspaceNav: 'ESPACE DE TRAVAIL', platformWorkspace: 'Administration', platformIntro: 'Vos établissements, leurs activités et leurs équipes dans un seul espace.',
+  shopsCount: 'Établissements', platformScope: 'Espace', platformScopeValue: 'Gestion des établissements',
+  getStarted: 'Démarrage guidé', platformEmptyTitle: 'Votre premier établissement commence ici',
+  platformEmptyDetail: 'Aucun établissement n’est encore créé. Configurez une activité avec des articles de démonstration pour découvrir le fonctionnement, sans utiliser de données réelles.',
+  setupCreate: 'Créer l’établissement', setupActivities: 'Choisir les activités', setupDemo: 'Explorer en mode démo', startFirstShop: 'Créer le premier établissement',
   act_butcher: 'Boucherie', act_grill: 'Grillades', act_restaurant: 'Restaurant', act_grocery: 'Alimentation générale', act_equipment: 'Équipements et pièces', act_mechanic: 'Mécanique auto', act_security_systems: 'Alarme et incendie',
 };
 const ar = {
@@ -49,6 +54,11 @@ const ar = {
   created: 'تم إنشاء المؤسسة', itemsCount: 'الأصناف', usersCount: 'المستخدمون',
   errNetwork: 'خطأ في الشبكة', errGeneric: 'حدث خطأ', errForbidden: 'إجراء غير مسموح', errStock: 'المخزون غير كافٍ أو الحالة غير صالحة',
   language: 'اللغة', demoNote: 'بيئة تجريبية: لا تُدخل أي بيانات حقيقية.',
+  demoBadge: 'تجريبي', workspaceNav: 'مساحة العمل', platformWorkspace: 'إدارة المنصة', platformIntro: 'كل المؤسسات والأنشطة والفرق في مساحة واحدة.',
+  shopsCount: 'المؤسسات', platformScope: 'المساحة', platformScopeValue: 'إدارة المؤسسات',
+  getStarted: 'بداية موجّهة', platformEmptyTitle: 'ابدأ بإنشاء أول مؤسسة',
+  platformEmptyDetail: 'لم تُنشأ أي مؤسسة بعد. اختر النشاط وأنشئ أصنافاً تجريبية لاكتشاف طريقة العمل، دون إدخال بيانات حقيقية.',
+  setupCreate: 'إنشاء المؤسسة', setupActivities: 'اختيار الأنشطة', setupDemo: 'التجربة ببيانات افتراضية', startFirstShop: 'إنشاء المؤسسة الأولى',
   act_butcher: 'جزارة', act_grill: 'مشوي', act_restaurant: 'مطعم', act_grocery: 'مواد غذائية', act_equipment: 'معدات وقطع غيار', act_mechanic: 'ميكانيكا السيارات', act_security_systems: 'أنظمة الإنذار والحريق',
 };
 const dicts = { fr, ar };

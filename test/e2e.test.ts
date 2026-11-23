@@ -44,6 +44,35 @@ const noLeaks = async (page: P) => expect(await page.evaluate(() => document.bod
 const hasMoney = (s: string, v: string) => new RegExp(v.replace('.', '[.,]')).test(s.replace(/\s/g, ''));
 
 describe('web UI in a real browser', () => {
+  it('E0b: empty platform shows actionable onboarding and responsive AR/FR navigation without fake metrics', async () => {
+    const { ctx, page, problems } = await newPage();
+    // The empty-state UI is a deterministic fixture: parallel suites create real tenants in the shared CI database.
+    await page.route('**/platform/tenants', (route: any) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tenants: [] }) }));
+    await uiLogin(page, admin.email);
+    await page.waitForSelector('.platform-empty');
+    expect(await page.getByRole('heading', { name: /premier établissement/i }).isVisible()).toBe(true);
+    expect((await page.locator('.overview-strip .v').first().innerText()).trim()).toBe('0');
+    expect(await page.getByRole('button', { name: /créer le premier établissement/i }).isVisible()).toBe(true);
+    await page.getByRole('button', { name: /créer le premier établissement/i }).click();
+    await page.waitForSelector('#sn');
+    expect(await page.locator('#ss').isVisible()).toBe(true);
+    await page.keyboard.press('Escape');
+    await ctx.close();
+
+    const mobile = await newPage({ mobile: true, locale: 'ar-MA' });
+    await mobile.page.route('**/platform/tenants', (route: any) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tenants: [] }) }));
+    await uiLogin(mobile.page, admin.email);
+    await mobile.page.waitForSelector('.platform-empty');
+    expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
+    expect(await mobile.page.locator('.workspace .nav a').count()).toBe(1);
+    const fits = await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+    expect(fits).toBe(true);
+    expect([...problems, ...mobile.problems]).toEqual([]);
+    await mobile.ctx.close();
+  });
+
   it('E1 (desktop, FR): platform admin creates a shop by activity; owner runs a full weighed sale with grilling; stock, dashboard and cancellation reflect it', async () => {
     const { ctx, page, problems } = await newPage();
     // 1) platform administrator creates the shop through the UI
