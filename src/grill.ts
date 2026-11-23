@@ -228,7 +228,7 @@ export function registerGrillRoutes(k: Kit) {
       inputQty:num(b.inputQty,'inputQty',{positive:true}),outputQty:num(b.outputQty,'outputQty',{positive:true}),
       wasteQty:optNum(b.wasteQty,'wasteQty',{min:0})??0};
     if(p.inputItemId===p.outputItemId)throw bad('input/output must be different items');
-    if(p.outputQty+p.wasteQty>p.inputQty+0.00001)throw bad('output and waste exceed input quantity');
+    if(Math.abs(Math.round((p.outputQty+p.wasteQty-p.inputQty)*10000))>1)throw bad('input mass must equal output plus recorded waste');
     const result=await runCommand(runtime,a.ctx,{key:idemKey(rc),type:'production_transform',payload:p},async(cc)=>{
       const itemRows=(await cc.client.query('SELECT id,base_uom,track_quantity FROM items WHERE id=ANY($1::uuid[])',
         [[p.inputItemId,p.outputItemId]])).rows;
