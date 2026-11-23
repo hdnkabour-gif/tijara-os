@@ -3,7 +3,8 @@
 -- user identity or take over a platform administrator via password reset.
 
 CREATE OR REPLACE FUNCTION auth_admin_set_password(p_user uuid, p_hash text) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $
+DECLARE v_actor uuid; v_memberships int;
 BEGIN
   IF app_tenant() IS NULL OR app_user() IS NULL THEN
     RAISE EXCEPTION 'no authenticated tenant context' USING ERRCODE = '42501';
@@ -17,8 +18,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM memberships WHERE tenant_id=app_tenant() AND user_id=p_user
   ) THEN RETURN false; END IF;
-  IF p_user=app_user() OR EXISTS (SELECT 1 FROM platform_admins WHERE user_id=p_user)
-     OR (SELECT count(*) FROM memberships WHERE user_id=p_user) <> 1 THEN
+  -- memberships has FORCE RLS. Switch the user GUC temporarily to the TARGET to count
+  -- every tenant membership (otherwise other-tenant rows are invisible to the actor).
+  v_actor := app_user();
+  PERFORM set_config('app.user_id', p_user::text, true);
+  SELECT count(*)::int INTO v_memberships FROM memberships WHERE user_id=p_user;
+  PERFORM set_config('app.user_id', v_actor::text, true);
+  IF p_user=v_actor OR EXISTS (SELECT 1 FROM platform_admins WHERE user_id=p_user)
+     OR v_memberships <> 1 THEN
     RAISE EXCEPTION 'cannot reset shared, platform or own login from shop settings' USING ERRCODE = '42501';
   END IF;
   UPDATE users SET password_hash=p_hash, failed_attempts=0, locked_until=NULL WHERE id=p_user;
@@ -27,12 +34,17 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION auth_set_user_name(p_user uuid, p_name text) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $
+DECLARE v_actor uuid; v_memberships int;
 BEGIN
   IF app_tenant() IS NULL THEN RAISE EXCEPTION 'no tenant context' USING ERRCODE = '42501'; END IF;
   IF NOT EXISTS (SELECT 1 FROM memberships WHERE tenant_id=app_tenant() AND user_id=p_user) THEN RETURN false; END IF;
+  v_actor := app_user();
+  PERFORM set_config('app.user_id', p_user::text, true);
+  SELECT count(*)::int INTO v_memberships FROM memberships WHERE user_id=p_user;
+  PERFORM set_config('app.user_id', COALESCE(v_actor::text, ''), true);
   IF EXISTS (SELECT 1 FROM platform_admins WHERE user_id=p_user)
-     OR (SELECT count(*) FROM memberships WHERE user_id=p_user) <> 1 THEN
+     OR v_memberships <> 1 THEN
     RAISE EXCEPTION 'cannot rename shared or platform account from shop settings' USING ERRCODE = '42501';
   END IF;
   UPDATE users SET name=p_name WHERE id=p_user;
