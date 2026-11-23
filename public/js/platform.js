@@ -3,16 +3,41 @@ import { dateFmt, getLang, t } from './i18n.js';
 
 export async function platformView() {
   const [{ tenants }, { activities }] = await Promise.all([api('GET', '/platform/tenants'), api('GET', '/activities')]);
-  const wrap = h('div');
+  const wrap = h('div', { class: 'platform-page' });
+  const openNewShop = () => openCreate(activities, () => platformView().then((v) => wrap.replaceWith(v)));
   const rows = tenants.map((x) => h('tr', null,
     h('td', null, x.name), h('td', null, x.slug), h('td', null, x.plan_id),
     h('td', null, (x.activities ?? []).map((a) => h('span', { class: 'badge' }, t(`act_${a}`)))),
     h('td', { class: 'num' }, String(x.users)), h('td', { class: 'num' }, String(x.items)), h('td', null, dateFmt(x.created_at))));
-  put(wrap, 
-    h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('shops')), h('button', { class: 'btn primary', type: 'button', onclick: () => openCreate(activities, () => platformView().then((v) => wrap.replaceWith(v))) }, `+ ${t('newShop')}`)),
-    h('div', { class: 'card tablewrap' }, h('table', null,
-      h('thead', null, h('tr', null, [t('name'), t('slug'), t('plan'), t('activities'), t('usersCount'), t('itemsCount'), t('date')].map((x) => h('th', null, x)))),
-      h('tbody', null, rows))));
+  put(wrap,
+    h('div', { class: 'page-heading' },
+      h('div', null,
+        h('span', { class: 'eyebrow' }, t('platformWorkspace')),
+        h('h1', null, t('shops')),
+        h('p', { class: 'muted page-intro' }, t('platformIntro'))),
+      h('button', { class: 'btn primary', type: 'button', onclick: openNewShop }, `+ ${t('newShop')}`)),
+    h('div', { class: 'grid overview-strip' },
+      h('div', { class: 'tile' },
+        h('span', { class: 'tile l' }, t('shopsCount')),
+        h('div', { class: 'v' }, String(tenants.length))),
+      h('div', { class: 'tile' },
+        h('span', { class: 'tile l' }, t('platformScope')),
+        h('div', { class: 'v overview-caption' }, t('platformScopeValue')))),
+    tenants.length === 0
+      ? h('section', { class: 'platform-empty card' },
+          h('div', { class: 'empty-illustration', 'aria-hidden': 'true' }, '◈'),
+          h('div', { class: 'empty-content' },
+            h('span', { class: 'eyebrow' }, t('getStarted')),
+            h('h2', null, t('platformEmptyTitle')),
+            h('p', { class: 'muted' }, t('platformEmptyDetail')),
+            h('div', { class: 'setup-steps' },
+              h('div', null, h('b', null, '01'), h('span', null, t('setupCreate'))),
+              h('div', null, h('b', null, '02'), h('span', null, t('setupActivities'))),
+              h('div', null, h('b', null, '03'), h('span', null, t('setupDemo')))),
+            h('button', { class: 'btn primary', type: 'button', onclick: openNewShop }, t('startFirstShop'))))
+      : h('div', { class: 'card tablewrap' }, h('table', null,
+          h('thead', null, h('tr', null, [t('name'), t('slug'), t('plan'), t('activities'), t('usersCount'), t('itemsCount'), t('date')].map((x) => h('th', null, x)))),
+          h('tbody', null, rows))));
   return wrap;
 }
 
