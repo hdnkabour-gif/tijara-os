@@ -110,8 +110,9 @@ export function registerWorkshopRoutes(k:Kit){
         const item=(await cc.client.query('SELECT id,sku,name,price,active,serial_tracking FROM items WHERE id=$1',[l.itemId])).rows[0];
         if(!item||!item.active)throw new HttpError(400,'VALIDATION','item is missing or archived');
         if(item.serial_tracking)throw bad('serial tracked parts require a dedicated serial selection step');
-        await cc.client.query(`INSERT INTO workshop_order_lines (tenant_id,work_order_id,item_id,qty,unit_price,line_total)
-           VALUES ($1,$2,$3,$4,$5,round($4::numeric*$5::numeric,2))`,[cc.tenantId,id,l.itemId,l.qty,item.price]);
+        await cc.client.query(`INSERT INTO workshop_order_lines (tenant_id,work_order_id,item_id,item_name_at_quote,item_sku_at_quote,qty,unit_price,line_total)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,round($6::numeric*$7::numeric,2))`,
+           [cc.tenantId,id,l.itemId,item.name,item.sku,l.qty,item.price]);
       }
       const total=(await cc.client.query(`UPDATE workshop_orders SET quote_total=COALESCE(
           (SELECT sum(line_total) FROM workshop_order_lines WHERE work_order_id=$1),0) WHERE id=$1 RETURNING quote_total`,[id])).rows[0].quote_total;
