@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Api, createShop, key, platformAdmin, staff, startApp } from './api-helpers.js';
 
 let api:Api, admin:{token:string};
@@ -97,5 +97,23 @@ describe('Phase C vehicle and workshop lifecycle',()=>{
     expect((await post({nextServiceDate:new Date().toISOString().slice(0,10)})).status).toBe(400);
     expect((await post({nextServiceKm:70000,nextServiceDate:new Date(Date.now()+90*86400000).toISOString().slice(0,10)})).status).toBe(201);
     expect((await post({})).status).toBe(201);                                   // no next service at all is fine
+  });
+  it('WC5: replaying a committed quote after its next-service date has passed returns the stored result, not 400',async()=>{
+    const A=await createShop(api,admin,'pro','Replay Garage',['mechanic']);
+    const service=(await api.call('GET','/items',user(A.ownerToken))).json.items.find((x:any)=>x.sku==='MEC-VIDANGE').id;
+    const v=(await api.call('POST','/workshop/vehicles',{token:A.ownerToken,body:{plate:'66-d-666',make:'Renault',model:'Clio',odometerKm:40000}})).json.id;
+    const body={branchId:A.branchId,vehicleId:v,mileageAtVisit:40000,lines:[{itemId:service,qty:1}],
+      nextServiceDate:new Date(Date.now()+86400000).toISOString().slice(0,10)};
+    const idem=key();
+    const first=await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':idem},body});
+    expect(first.status).toBe(201);
+    vi.useFakeTimers({toFake:['Date'],now:Date.now()+3*86400000});   // the response was lost; the client retries days later
+    try{
+      const again=await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':idem},body});
+      expect(again.status).toBe(201);expect(again.json.id).toBe(first.json.id);
+      // a NEW quote with that (now past) date is still refused
+      expect((await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':key()},body})).status).toBe(400);
+    }finally{vi.useRealTimers();}
+    expect((await api.call('GET',`/workshop/orders?branchId=${A.branchId}`,user(A.ownerToken))).json.orders.length).toBe(1);
   });
 });

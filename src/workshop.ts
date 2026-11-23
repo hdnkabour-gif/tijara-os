@@ -100,8 +100,10 @@ export function registerWorkshopRoutes(k:Kit){
     if(p.nextServiceKm!==null&&!Number.isSafeInteger(p.nextServiceKm))throw bad('nextServiceKm must be integer');
     // A "next service" that is already due would appear in the reminders immediately: refuse it.
     if(p.nextServiceKm!==null&&p.nextServiceKm<=mileage)throw bad('nextServiceKm must be greater than the current mileage');
-    if(p.nextServiceDate&&p.nextServiceDate<=new Date().toISOString().slice(0,10))throw bad('nextServiceDate must be in the future');
     const result=await runCommand(runtime,a.ctx,{key:idemKey(rc),type:'workshop_quote',payload:p},async(cc)=>{
+      // Time-dependent check lives inside the command: a replay of an already committed quote returns the stored result
+      // even after the date has passed, instead of a 400 that would hide the quote from the client.
+      if(p.nextServiceDate&&p.nextServiceDate<=new Date().toISOString().slice(0,10))throw bad('nextServiceDate must be in the future');
       const vehicle=(await cc.client.query('SELECT * FROM workshop_vehicles WHERE id=$1 FOR UPDATE',[vehicleId])).rows[0];
       if(!vehicle)throw new HttpError(404,'NOT_FOUND','vehicle not found');
       if(mileage<Number(vehicle.odometer_km))throw new HttpError(409,'INVALID_STATE','mileage is lower than recorded odometer');
