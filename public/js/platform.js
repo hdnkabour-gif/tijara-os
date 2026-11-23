@@ -1,10 +1,11 @@
 import { api, errorBox, field, friendly, h, modal, toast, put } from './lib.js';
 import { dateFmt, getLang, t } from './i18n.js';
 
-export async function platformView() {
+/** `opts.reload`: how to redraw after a change (the Control Center passes its enhanced list so filters and links survive). */
+export async function platformView(opts = {}) {
   const [{ tenants }, { activities }, { plans }] = await Promise.all([api('GET', '/platform/tenants'), api('GET', '/activities'), api('GET','/platform/plans')]);
   const wrap = h('div', { class: 'platform-page' });
-  const reload = () => platformView().then(v => wrap.replaceWith(v));
+  const reload = opts.reload ?? (() => platformView().then(v => wrap.replaceWith(v)));
   const openNewShop = () => openCreate(activities, plans, reload);
   const editShop = (shop) => openControls(shop,plans,reload);
   const rows = tenants.map((x) => h('tr', null,

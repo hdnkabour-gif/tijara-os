@@ -197,6 +197,9 @@ describe('web UI in a real browser', () => {
     await page.fill('#tenant-reason','Maintenance temporaire');
     await page.locator('.modal button[type=submit]').click();
     await page.waitForSelector('tr:has-text("Suspension UI Pilot") >> text=Suspendu');
+    // the refreshed list is still the Control Center list: search/filters and the 360° link survive the edit
+    expect(await page.locator('#shop-search').count()).toBe(1);
+    expect(await page.locator('tr:has-text("Suspension UI Pilot")').getByRole('link',{name:'Suspension UI Pilot'}).count()).toBe(1);
     expect((await api.call('GET','/items',{token:shop.ownerToken})).status).toBe(423);
     await page.locator('tr:has-text("Suspension UI Pilot")').getByRole('button',{name:'Gérer'}).click();
     await page.locator('#tenant-status').selectOption('active');
@@ -743,7 +746,7 @@ describe('web UI in a real browser', () => {
     await page.locator('#platform-overview').waitFor();
     expect(await page.locator('.workspace.theme-platform').count()).toBe(1);
     await page.locator('#platform-alerts').getByRole('link',{name:'Atelier Bleu E2E'}).first().waitFor();
-    expect(await page.locator('#platform-health').innerText()).toMatch(/Non configurée/);   // honest: no off-site backup yet
+    expect(await page.locator('#backup-state').innerText()).toMatch(/sauvegarde|Sauvegarde/);   // the state recorded by real backup runs
     await shot(page,'e19-platform-overview');
     await toShops(page);
     await page.fill('#shop-search','Atelier Bleu');

@@ -53,15 +53,23 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
       pending = info.expectedMigrations.filter((n) => !applied.has(n)).length;
     }
     const lastMigration = (await runtime.query('SELECT name, applied_at FROM schema_migrations ORDER BY name DESC LIMIT 1')).rows[0] ?? null;
+    // what the backup job and restore drills really recorded (never inferred from configuration)
+    const ev = (await platform.query(`SELECT
+        (SELECT row_to_json(e) FROM (SELECT ok, at, detail FROM platform_backup_events WHERE kind='backup' ORDER BY at DESC, id DESC LIMIT 1) e) AS last_backup,
+        (SELECT row_to_json(e) FROM (SELECT at, detail FROM platform_backup_events WHERE kind='backup' AND ok ORDER BY at DESC, id DESC LIMIT 1) e) AS last_ok,
+        (SELECT max(at) FROM platform_backup_events WHERE kind='restore_drill' AND ok) AS last_drill`)).rows[0];
+    const lastOk = ev.last_ok, last = ev.last_backup;
+    const backup = !last ? 'never' : !last.ok ? 'failed' : Date.now() - new Date(last.at).getTime() > 26 * 3600000 ? 'stale' : 'ok';
     return { body: {
       shops: tenants.length, byStatus, byPlan,
       users: tenants.reduce((a, t) => a + Number(t.users), 0),
       alerts: tenants.flatMap((t) => alertsFor(t)),
       health: {
         version: info.version, pendingMigrations: pending, lastMigration,
-        // honest status: only "configured" when the operator set the off-site backup variables; a restore drill is a manual, recorded step
-        offsiteBackup: process.env.BACKUP_R2_BUCKET ? 'configured' : 'not_configured',
-        lastRestoreDrill: process.env.LAST_RESTORE_DRILL_AT ?? null,
+        backup,                                                     // never | failed | stale (> 26 h) | ok
+        lastBackupAt: last?.at ?? null, lastSuccessfulBackupAt: lastOk?.at ?? null,
+        offsite: lastOk ? lastOk.detail?.dest === 's3' : false,   // a file: destination is NOT off-site
+        lastRestoreDrill: ev.last_drill ?? null,
       },
     } };
   });

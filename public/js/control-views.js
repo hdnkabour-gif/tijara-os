@@ -10,7 +10,8 @@ const L = {
     alerts: 'Alertes', noAlerts: 'Aucune alerte : tous les commerces sont dans leurs limites.',
     k_suspended: 'Commerce suspendu', k_trial_expired: 'Essai expiré', k_trial_ending: 'Essai bientôt terminé', k_quota_full: 'Limite atteinte', k_quota_high: 'Limite presque atteinte',
     version: 'Version en ligne', pending: 'Migrations en attente', lastMigration: 'Dernière migration', backup: 'Sauvegarde externe',
-    backupNo: 'Non configurée — aucune sauvegarde hors Railway', backupYes: 'Configurée', drill: 'Dernier test de restauration', drillNo: 'Jamais vérifié',
+    b_never: 'Aucune sauvegarde enregistrée', b_failed: 'Dernière sauvegarde en échec', b_stale: 'Dernière sauvegarde de plus de 26 h', b_ok: 'Sauvegarde du jour réussie',
+    lastOk: 'dernière réussie le', notOffsite: 'copie locale, pas hors Railway', drill: 'Dernier test de restauration', drillNo: 'Jamais vérifié',
     unknown: 'inconnu', open: 'Ouvrir', search: 'Rechercher un commerce (nom, identifiant)', allStatus: 'Tous les états', allPlans: 'Toutes les formules',
     st_active: 'Actif', st_suspended: 'Suspendu', st_trial_expired: 'Essai expiré', plan: 'Formule', status: 'État', created: 'Créé le',
     card: 'Fiche 360°', identity: 'Abonnement', usage: 'Consommation', modules: 'Modules', people: 'Équipe', owners: 'Propriétaires',
@@ -32,7 +33,8 @@ const L = {
     alerts: 'التنبيهات', noAlerts: 'لا توجد تنبيهات: كل المحلات داخل حدودها.',
     k_suspended: 'محل موقوف', k_trial_expired: 'انتهت التجربة', k_trial_ending: 'التجربة على وشك الانتهاء', k_quota_full: 'تم بلوغ الحد', k_quota_high: 'اقترب من الحد',
     version: 'الإصدار المنشور', pending: 'ترحيلات معلقة', lastMigration: 'آخر ترحيل', backup: 'النسخ الاحتياطي الخارجي',
-    backupNo: 'غير مُعد — لا توجد نسخة خارج Railway', backupYes: 'مُعد', drill: 'آخر اختبار استرجاع', drillNo: 'لم يُتحقق منه بعد',
+    b_never: 'لا توجد أي نسخة احتياطية مسجلة', b_failed: 'فشلت آخر نسخة احتياطية', b_stale: 'آخر نسخة أقدم من 26 ساعة', b_ok: 'نجحت نسخة اليوم',
+    lastOk: 'آخر نسخة ناجحة في', notOffsite: 'نسخة محلية وليست خارج Railway', drill: 'آخر اختبار استرجاع', drillNo: 'لم يُتحقق منه بعد',
     unknown: 'غير معروف', open: 'فتح', search: 'ابحث عن محل (الاسم أو المعرّف)', allStatus: 'كل الحالات', allPlans: 'كل الباقات',
     st_active: 'نشط', st_suspended: 'موقوف', st_trial_expired: 'تجربة منتهية', plan: 'الباقة', status: 'الحالة', created: 'تاريخ الإنشاء',
     card: 'بطاقة 360°', identity: 'الاشتراك', usage: 'الاستهلاك', modules: 'الوحدات', people: 'الفريق', owners: 'المالكون',
@@ -81,14 +83,17 @@ export async function overviewView() {
         h('dt', null, c('version')), h('dd', { dir: 'ltr' }, o.health.version),
         h('dt', null, c('pending')), h('dd', null, o.health.pendingMigrations == null ? c('unknown') : String(o.health.pendingMigrations)),
         h('dt', null, c('lastMigration')), h('dd', { dir: 'ltr' }, o.health.lastMigration ? `${o.health.lastMigration.name} · ${dateFmt(o.health.lastMigration.applied_at)}` : c('unknown')),
-        h('dt', null, c('backup')), h('dd', null, h('span', { class: o.health.offsiteBackup === 'configured' ? 'badge ok' : 'badge bad' }, o.health.offsiteBackup === 'configured' ? c('backupYes') : c('backupNo'))),
+        h('dt', null, c('backup')), h('dd', { id: 'backup-state' }, h('span', { class: o.health.backup === 'ok' && o.health.offsite ? 'badge ok' : 'badge bad' }, c(`b_${o.health.backup}`)),
+          o.health.lastSuccessfulBackupAt ? ` · ${c('lastOk')} ${dateFmt(o.health.lastSuccessfulBackupAt)}` : '',
+          o.health.lastSuccessfulBackupAt && !o.health.offsite ? ` · ${c('notOffsite')}` : ''),
         h('dt', null, c('drill')), h('dd', null, o.health.lastRestoreDrill ? dayFmt(o.health.lastRestoreDrill) : c('drillNo')))));
   return wrap;
 }
 
 export async function shopsView() {
   const [{ tenants }, { plans }] = await Promise.all([api('GET', '/platform/tenants'), api('GET', '/platform/plans')]);
-  const base = await platformView();          // creation wizard + table come from the existing page
+  // after an edit or a creation, redraw THIS enhanced page (search, filters, 360° links), not the bare list
+  const base = await platformView({ reload: () => shopsView().then((v) => base.replaceWith(v)) });          // creation wizard + table come from the existing page
   const q = h('input', { id: 'shop-search', type: 'search', placeholder: c('search'), 'aria-label': c('search') });
   const st = h('select', { id: 'shop-status', 'aria-label': c('status') }, h('option', { value: '' }, c('allStatus')),
     ['active', 'suspended', 'trial_expired'].map((s) => h('option', { value: s }, c(`st_${s}`))));

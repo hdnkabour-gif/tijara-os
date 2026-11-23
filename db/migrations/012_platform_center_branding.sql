@@ -52,3 +52,29 @@ LANGUAGE sql SECURITY DEFINER SET search_path=public,pg_temp AS $$
    ORDER BY a.at DESC LIMIT LEAST(GREATEST(p_limit,1),500) $$;
 REVOKE ALL ON FUNCTION platform_audit_feed(uuid,int) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform_audit_feed(uuid,int) TO app_platform;
+
+-- 4) Backup / restore-drill outcomes, written by the backup job and by a restore drill (not by the application):
+--    the Control Center shows what really happened, never a status inferred from an environment variable.
+CREATE TABLE platform_backup_events (
+  id bigserial PRIMARY KEY,
+  kind text NOT NULL CHECK (kind IN ('backup','restore_drill')),
+  ok boolean NOT NULL,
+  at timestamptz NOT NULL DEFAULT now(),
+  detail jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (octet_length(detail::text) <= 2000)
+);
+CREATE INDEX platform_backup_events_kind_at ON platform_backup_events (kind, at DESC);
+CREATE TRIGGER trg_platform_backup_events_immutable BEFORE UPDATE OR DELETE ON platform_backup_events
+  FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
+GRANT SELECT ON platform_backup_events TO app_platform;
+
+-- Callable by the backup job's own database login; the two application roles can never record a (fake) backup.
+CREATE FUNCTION platform_record_backup(p_kind text, p_ok boolean, p_detail jsonb) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+BEGIN
+  IF session_user IN ('app_runtime','app_platform') THEN
+    RAISE EXCEPTION 'backup events are recorded by the backup job only' USING ERRCODE='42501';
+  END IF;
+  INSERT INTO platform_backup_events (kind, ok, detail) VALUES (p_kind, p_ok, COALESCE(p_detail,'{}'::jsonb));
+END $$;
+REVOKE ALL ON FUNCTION platform_record_backup(text,boolean,jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform_record_backup(text,boolean,jsonb) TO PUBLIC;

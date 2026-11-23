@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Api, createShop, key, platformAdmin, staff, startApp } from './api-helpers.js';
+import { owner, platform as platformPool, runtime as runtimePool } from './helpers.js';
 
 let api:Api, admin:{token:string};
 beforeAll(async()=>{api=await startApp();admin=await platformAdmin(api);});
@@ -26,7 +27,7 @@ describe('PR-B platform control center (metadata only)',()=>{
     expect(o.alerts).toEqual(expect.arrayContaining([
       expect.objectContaining({tenantId:B.tenantId,kind:'suspended',detail:'Unpaid test invoice'}),
       expect.objectContaining({tenantId:A.tenantId,kind:'quota_full',detail:'items 4/4'})]));
-    expect(o.health).toMatchObject({offsiteBackup:'not_configured',lastRestoreDrill:null});
+    expect(['never','failed','stale','ok']).toContain(o.health.backup);
     expect([0,null]).toContain(o.health.pendingMigrations);   // null = this test server was not given the expected list (production server is)
     expect(o.health.lastMigration.name).toMatch(/^012_/);
   });
@@ -100,5 +101,26 @@ describe('PR-B shop side: my plan (read-only) and branding',()=>{
     // a suspended shop cannot change its branding (data is kept)
     expect((await controls(A.tenantId,{status:'suspended',reason:'test'})).status).toBe(200);
     expect((await api.call('PUT','/tenant/branding',{token:A.ownerToken,body:{primaryColor:'#000000'}})).status).toBe(423);
+  });
+});
+
+describe('PR-B backup status comes from recorded backup runs',()=>{
+  it('CC6: the application roles cannot record a backup; real runs drive the status (failed / ok / off-site / restore drill)',async()=>{
+    for(const pool of [runtimePool,platformPool])
+      await expect(pool.query("SELECT platform_record_backup('backup',true,'{\"dest\":\"s3\"}')")).rejects.toMatchObject({code:'42501'});
+    const record=(kind:string,ok:boolean,detail:object)=>owner.query('SELECT platform_record_backup($1,$2,$3)',[kind,ok,JSON.stringify(detail)]);
+    const health=async()=>(await api.call('GET','/platform/overview',as(admin.token))).json.health;
+    await record('backup',true,{dest:'file',name:'tijara-local.dump.enc'});
+    expect(await health()).toMatchObject({backup:'ok',offsite:false});                 // a local file is not an off-site copy
+    await record('backup',true,{dest:'s3',name:'tijara-r2.dump.enc'});
+    expect(await health()).toMatchObject({backup:'ok',offsite:true});
+    await record('backup',false,{dest:'s3',error:'read-back checksum mismatch'});
+    const h=await health();
+    expect(h.backup).toBe('failed');
+    expect(h.lastSuccessfulBackupAt).not.toBeNull();
+    await record('restore_drill',true,{file:'tijara-r2.dump.enc'});
+    expect((await health()).lastRestoreDrill).not.toBeNull();
+    // events are append-only, even for the owner role
+    await expect(owner.query('DELETE FROM platform_backup_events')).rejects.toThrow();
   });
 });
