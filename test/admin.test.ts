@@ -110,7 +110,11 @@ describe('team management', () => {
     expect((await api.call('PATCH', `/users/${ownerId}`, { ...j(hr.token), body: { active: false } })).status).toBe(403);
     expect((await api.call('POST', `/users/${ownerId}/password`, { ...j(hr.token), body: { password: 'Hostile-Takeover-1' } })).status).toBe(403);
     expect((await api.call('POST', '/roles', { ...j(hr.token), body: { name: 'sneaky', permissions: ['users.manage', 'settings.manage'] } })).status).toBe(403);   // cannot grant what it lacks
-    expect((await api.call('POST', `/users/${cashier.userId}/password`, { ...j(hr.token), body: { password: 'Delegated-Reset-1' } })).status).toBe(200);          // but may do its job
+    expect((await api.call('POST', `/users/${cashier.userId}/password`, { ...j(hr.token), body: { password: 'Delegated-Reset-1' } })).status).toBe(403);          // reset requires shop owner, not delegated HR
+    expect((await api.call('POST', '/users', { ...j(hr.token), body: { email: `owner.${uniq('attack')}@test.local`, name: 'Fake owner', password: PW, roleName: 'owner', branchIds: [] } })).status).toBe(403);
+    expect((await api.call('POST', '/users', { ...j(hr.token), body: { email: `manager.${uniq('attack')}@test.local`, name: 'Fake manager', password: PW, roleName: 'manager', branchIds: [] } })).status).toBe(403);
+    expect((await api.call('PATCH', `/users/${cashier.userId}`, { ...j(hr.token), body: { branchIds: [A.branchId] } })).status).toBe(200);
+    expect((await api.call('POST', '/roles', { ...j(hr.token), body: { name: 'junior', permissions: ['stock.view'] } })).status).toBe(403);
     // owner promotes a second owner, then the first can be demoted, but never the last
     const second = await staff(api, A, 'cashier');
     expect((await api.call('PATCH', `/users/${second.userId}`, { ...j(A.ownerToken), body: { roleName: 'owner' } })).status).toBe(200);
@@ -158,6 +162,43 @@ describe('team management', () => {
     expect((await api.call('PATCH', `/roles/${bRole}`, { ...j(A.ownerToken), body: { permissions: ['stock.view'] } })).status).toBe(404);
     expect((await api.call('GET', '/roles', j(u.token))).status).toBe(403);
   });
+  it('AD8: scoped HR cannot expand its own or a subordinate branch access or create unrestricted users', async () => {
+    const A = await createShop(api, admin);
+    const b2 = (await api.call('POST', '/branches', { ...j(A.ownerToken), body: { name: 'Other branch' } })).json.id;
+    expect((await api.call('POST', '/roles', { ...j(A.ownerToken), body: { name: 'scoped_hr', permissions: ['users.manage', 'stock.view'] } })).status).toBe(201);
+    expect((await api.call('POST', '/roles', { ...j(A.ownerToken), body: { name: 'junior', permissions: ['stock.view'] } })).status).toBe(201);
+    const hr = await staff(api, A, 'scoped_hr', [A.branchId]);
+    const worker = await staff(api, A, 'junior', [A.branchId]);
+    const payload = (branchIds: string[]) => ({ name: 'Junior', email: `junior.${uniq('x')}@test.local`, password: PW, roleName: 'junior', branchIds });
+    expect((await api.call('PATCH', `/users/${hr.userId}`, { ...j(hr.token), body: { branchIds: [] } })).status).toBe(403);
+    expect((await api.call('PATCH', `/users/${worker.userId}`, { ...j(hr.token), body: { branchIds: [] } })).status).toBe(403);
+    expect((await api.call('PATCH', `/users/${worker.userId}`, { ...j(hr.token), body: { branchIds: [b2] } })).status).toBe(403);
+    expect((await api.call('POST', '/users', { ...j(hr.token), body: payload([]) })).status).toBe(403);
+    expect((await api.call('POST', '/users', { ...j(hr.token), body: payload([b2]) })).status).toBe(403);
+    expect((await api.call('POST', '/users', { ...j(hr.token), body: payload([A.branchId]) })).status).toBe(201);
+    expect((await api.call('POST', '/users', { ...j(hr.token), body: payload([A.branchId, A.branchId]) })).status).toBe(400);
+    expect((await api.call('POST', '/users', { ...j(hr.token), body: { ...payload([A.branchId]), branchIds: 'not-array' } })).status).toBe(400);
+    const allScoped = (await users(A)).filter((x: any) => x.role === 'junior');
+    expect(allScoped.every((x: any) => x.branch_ids.includes(A.branchId) && !x.branch_ids.includes(b2))).toBe(true);
+  });
+
+  it('AD9: owner in one shop cannot take over a platform-admin or multi-tenant global login', async () => {
+    const master = await platformAdmin(api);
+    const ten = await api.call('POST', '/platform/tenants', { ...j(master.token),
+      body: { name: 'Shared account security', slug: uniq('shared').toLowerCase(), plan: 'pro', owner: { self: true } } });
+    expect(ten.status).toBe(201);
+    expect((await api.call('POST', '/auth/switch-tenant', { ...j(master.token), body: { tenantId: ten.json.tenantId } })).status).toBe(200);
+    const otherOwnerEmail = `owner.${uniq('delegate')}@test.local`;
+    const created = await api.call('POST', '/users', { ...j(master.token),
+      body: { email: otherOwnerEmail, name: 'Other Owner', password: PW, roleName: 'owner', branchIds: [] } });
+    expect(created.status).toBe(201);
+    const otherLogin = await api.call('POST', '/auth/login', { body: { email: otherOwnerEmail, password: PW } });
+    expect(otherLogin.status).toBe(200);
+    const blocked = await api.call('POST', `/users/${master.id}/password`, { ...j(otherLogin.json.token), body: { password: 'Hostile-Takeover-1' } });
+    expect(blocked.status).toBe(403);
+    expect((await api.call('PATCH', `/users/${master.id}`, { ...j(otherLogin.json.token), body: { name: 'Global Name Hijack' } })).status).toBe(403);
+    expect((await api.call('POST', '/auth/login', { body: { email: master.email, password: PW } })).status).toBe(200);
+  });
 });
 
 describe('shop identity, printable invoice, journal', () => {
@@ -167,6 +208,10 @@ describe('shop identity, printable invoice, journal', () => {
     expect((await api.call('PATCH', '/tenant', { ...j(manager.token), body: { company: { legalName: 'X' } } })).status).toBe(403);
     expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { name: 'Renamed Shop', company: { legalName: 'SARL Demo', address: '1 Rue Test', phone: '0500000000', ice: '001234567000089', if: '12345', rc: '999', footer: 'Merci !' } } })).status).toBe(200);
     expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { name: 'Renamed Shop', company: { legalName: 'SARL Demo', address: '', phone: '', ice: '001234567000089', if: '', rc: '', footer: 'Merci !' } } })).status).toBe(200);   // empty optional fields are fine
+    // PATCH of just one company field must not erase other legal or invoice data.
+    expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { company: { footer: 'Only footer updated' } } })).status).toBe(200);
+    const afterPatch = (await api.call('GET', '/tenant', j(A.ownerToken))).json;
+    expect(afterPatch.company).toMatchObject({ legalName: 'SARL Demo', ice: '001234567000089', address: '', footer: 'Only footer updated' });
     expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { company: { legalName: 'x'.repeat(201) } } })).status).toBe(400);
     const t = (await api.call('GET', '/tenant', j(cashier.token))).json;
     expect(t.name).toBe('Renamed Shop'); expect(t.company).toMatchObject({ legalName: 'SARL Demo', ice: '001234567000089', footer: 'Merci !' });
