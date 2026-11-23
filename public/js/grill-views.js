@@ -1,5 +1,5 @@
 import { api, field, friendly, h, modal, newKey, toast } from './lib.js';
-import { getLang, money, qtyFmt } from './i18n.js';
+import { dayFmt, getLang, money, qtyFmt } from './i18n.js';
 
 const dict = {
   fr: {
@@ -14,6 +14,9 @@ const dict = {
     outputQty:'Quantité obtenue', waste:'Perte / déchets (kg)', convert:'Enregistrer la transformation',
     empty:'Aucune opération à afficher', save:'Valider', cancel:'Annuler', loading:'Actualiser', archived:'Archivé',
     notProduction:'Choisissez deux produits différents avec la même unité', addLine:'Ajouter un article',
+    batch:'N° de lot', expiry:'À consommer avant le', serials:'Numéros de série (un par ligne)', supplierWarranty:'Garantie fournisseur jusqu’au',
+    expiring:'À écouler en priorité (péremption ≤ 3 jours)', daysLeft:'jours restants', expired:'Périmé — à retirer de la vente',
+    receipt:'Bon de réception', lineTotal:'Montant', expiryShort:'DLC', serialsShort:'N° de série', receivedBy:'Reçu par', details:'Détails', remove:'Retirer',
   },
   ar: {
     grill:'المطبخ والمشوي',queue:'طلبات التحضير',create:'إرسال إلى الشواء',label:'رقم الطاولة أو الطلب',
@@ -27,6 +30,9 @@ const dict = {
     outputQty:'الكمية المنتَجة',waste:'الفاقد/المخلفات (كلغ)',convert:'تسجيل التحويل',
     empty:'لا توجد عمليات للعرض',save:'تأكيد',cancel:'إلغاء',loading:'تحديث',archived:'مؤرشف',
     notProduction:'اختر منتجين مختلفين بنفس وحدة القياس', addLine:'إضافة صنف',
+    batch:'رقم الحصة (اللوط)', expiry:'تاريخ انتهاء الصلاحية', serials:'الأرقام التسلسلية (رقم في كل سطر)', supplierWarranty:'ضمان المورد حتى',
+    expiring:'يجب بيعه أولاً (تنتهي صلاحيته خلال 3 أيام)', daysLeft:'أيام متبقية', expired:'منتهي الصلاحية — يُسحب من البيع',
+    receipt:'سند الاستلام', lineTotal:'المبلغ', expiryShort:'نهاية الصلاحية', serialsShort:'الرقم التسلسلي', receivedBy:'استلمه', details:'التفاصيل', remove:'حذف',
   },
 };
 const w=(k)=>dict[getLang()][k]??k;
@@ -118,20 +124,73 @@ export async function suppliersView(S){
       const people=suppliers.filter(s=>s.active);
       if(!people.length||!productList.length){toast(w('empty'),true);return;}
       const supplier=select('purchase-supplier',people,s=>h('option',{value:s.id},s.name));
-      const item=itemSelect(productList,'purchase-item'),qty=numberInput('purchase-qty'),unitCost=numberInput('purchase-cost','0','0.0001');
       const reference=h('input',{id:'purchase-ref'});
+      const today=new Date().toISOString().slice(0,10),tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
+      const linesBox=h('div',{id:'purchase-lines'});
+      const lines=[];let n=0;
+      // one line = one product; batch/expiry only for products tracked by batch, serial numbers only for serial products
+      const addLine=()=>{
+        const i=n++;
+        const item=itemSelect(productList,`purchase-item-${i}`),qty=numberInput(`purchase-qty-${i}`),unitCost=numberInput(`purchase-cost-${i}`,'0','0.0001');
+        const batch=h('input',{id:`purchase-batch-${i}`,maxlength:'60'}),expiry=h('input',{id:`purchase-exp-${i}`,type:'date',min:tomorrow});
+        const serials=h('textarea',{id:`purchase-serials-${i}`,rows:'3'}),warranty=h('input',{id:`purchase-war-${i}`,type:'date',min:today});
+        const extra=h('div');
+        const row=h('div',{class:'card purchase-line'});
+        const pick=()=>productList.find(p=>p.id===item.value);
+        const refresh=()=>{
+          const it=pick();extra.replaceChildren();
+          qty.disabled=Boolean(it?.serial_tracking);
+          if(it&&it.batch_tracking!=='none'){
+            batch.required=it.batch_tracking==='required';
+            extra.append(...field(w('batch'),batch,batch.id),...field(w('expiry'),expiry,expiry.id));
+          }
+          if(it?.serial_tracking)extra.append(...field(w('serials'),serials,serials.id),...field(w('supplierWarranty'),warranty,warranty.id));
+        };
+        const line={read:()=>{
+          const it=pick(),list=serials.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+          const out={itemId:item.value,qty:it?.serial_tracking?list.length:Number(qty.value),unitCost:Number(unitCost.value)};
+          if(it&&it.batch_tracking!=='none'){ if(batch.value.trim())out.batchNo=batch.value.trim(); if(expiry.value)out.expiresAt=expiry.value; }
+          if(it?.serial_tracking){ out.serials=list; if(warranty.value)out.warrantyUntil=warranty.value; }
+          return out;
+        }};
+        item.addEventListener('change',refresh);
+        serials.addEventListener('input',()=>{ qty.value=String(serials.value.split(/\r?\n/).filter(x=>x.trim()).length); });
+        const drop=btn(w('remove'),()=>{ if(lines.length<2)return; lines.splice(lines.indexOf(line),1); row.remove(); });
+        row.append(...field(w('item'),item,item.id),...field(w('qty'),qty,qty.id),...field(w('cost'),unitCost,unitCost.id),extra,drop);
+        lines.push(line);linesBox.append(row);refresh();
+      };
+      addLine();
       formModal(w('newSupply'),[...field(w('supplier'),supplier,'purchase-supplier'),...field(w('reference'),reference,'purchase-ref'),
-        ...field(w('item'),item,'purchase-item'),...field(w('qty'),qty,'purchase-qty'),...field(w('cost'),unitCost,'purchase-cost')],async(key)=>{
+        linesBox,btn('+ '+w('addLine'),addLine)],async(key)=>{
           await api('POST','/purchase-receipts',{branchId,supplierId:supplier.value,reference:reference.value||null,
-            lines:[{itemId:item.value,qty:Number(qty.value),unitCost:Number(unitCost.value)}]}, {'idempotency-key':key});
+            lines:lines.map(l=>l.read())}, {'idempotency-key':key});
           toast(w('received'));await render();
         });
     };
-    const receipts=branchId?(await api('GET',`/purchase-receipts?branchId=${branchId}`)).receipts:[];
+    const showReceipt=async(id)=>{
+      const r=await api('GET',`/purchase-receipts/${id}`);
+      modal(`${w('receipt')} ${r.reference||''}`,h('div',{id:'receipt-detail'},
+        h('p',{class:'muted'},`${r.supplier} · ${new Date(r.created_at).toLocaleString()} · ${w('receivedBy')}: ${r.received_by??'—'}`),
+        h('div',{class:'tablewrap'},h('table',null,
+          h('thead',null,h('tr',null,[w('item'),w('qty'),w('lineTotal'),w('batch'),w('expiryShort'),w('serialsShort')].map(x=>h('th',null,x)))),
+          h('tbody',null,r.lines.map(l=>h('tr',null,h('td',null,l.name),h('td',{class:'num'},qtyFmt(l.qty)),h('td',{class:'num'},money(l.line_total)),
+            h('td',null,l.batch_no??''),h('td',null,dayFmt(l.expires_at)),
+            h('td',null,(l.serial_nos??[]).join(', ')+(l.warranty_until?` (${w('supplierWarranty')} ${dayFmt(l.warranty_until)})`:''))))))),
+        h('p',{class:'total'},money(r.total))));
+    };
+    const canStock=S.me.permissions.includes('stock.view');
+    const [receipts,expiring]=branchId?await Promise.all([
+      api('GET',`/purchase-receipts?branchId=${branchId}`).then(x=>x.receipts),
+      canStock?api('GET',`/stock/expiring?branchId=${branchId}&days=3`).then(x=>x.batches):[]]):[[],[]];
     root.replaceChildren(head(w('suppliers'),h('div',{class:'row'},S.me.permissions.includes('purchases.manage')&&btn('+ '+w('addSupplier'),createSup),S.me.permissions.includes('purchases.manage')&&btn('+ '+w('receive'),receive,'primary'))),
       branchSelector(S,branchId,(v)=>{branchId=v;render().catch(danger);}),
+      expiring.length>0&&card(h('h2',null,w('expiring')),h('ul',{id:'expiring-list'},expiring.map(b=>h('li',null,
+        h('strong',null,b.name),` · ${w('batch')} ${b.batch_no} · ${dayFmt(b.expires_on)} · ${qtyFmt(b.on_hand)} ${b.base_uom} · `,
+        h('span',{class:Number(b.days_left)<=1?'badge bad':'badge'},Number(b.days_left)<=0?w('expired'):`${b.days_left} ${w('daysLeft')}`))))),
       card(h('h2',null,w('suppliers')),h('div',{class:'chips'},suppliers.map(s=>h('span',{class:'chip'},s.name+(s.active?'':` (${w('archived')})`))))),
-      card(h('h2',null,w('newSupply')),receipts.length?receipts.map(r=>h('p',null,`${r.supplier} · ${r.reference||''} · ${money(r.total)}`)):h('p',{class:'muted'},w('empty'))));
+      card(h('h2',null,w('newSupply')),receipts.length?h('ul',{id:'receipt-list'},receipts.map(r=>h('li',null,
+        h('button',{type:'button',class:'linklike','data-receipt':r.id,onclick:()=>showReceipt(r.id).catch(danger)},
+          `${new Date(r.created_at).toLocaleDateString()} · ${r.supplier} · ${r.reference||''} · ${money(r.total)}`)))):h('p',{class:'muted'},w('empty'))));
   };
   await render();return root;
 }

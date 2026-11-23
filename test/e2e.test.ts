@@ -38,6 +38,7 @@ async function uiLogin(page: P, email: string, password = PW) {
   await page.fill('#pw', password);
   await page.click('button[type=submit]');
 }
+const shot=async(pg:P,name:string)=>{ if(process.env.SHOTS)await pg.screenshot({path:`${process.env.SHOTS}/${name}.png`}); };
 const text = (page: P, sel: string) => page.locator(sel).first().innerText();
 // the word "false"/"undefined"/"null" printed in the page means a rendering bug leaked a JS value
 const noLeaks = async (page: P) => expect(await page.evaluate(() => document.body.innerText)).not.toMatch(/\b(false|undefined|null|NaN|\[object)\b/);
@@ -593,8 +594,8 @@ describe('web UI in a real browser', () => {
     await page.waitForSelector('#tile-sales');
     await page.locator('nav.nav').getByRole('link',{name:'Fournisseurs & achats',exact:true}).click();
     await page.getByRole('button',{name:/Réceptionner une livraison/}).click();
-    await page.selectOption('#purchase-item',beef.id);
-    await page.fill('#purchase-qty','12.5'); await page.fill('#purchase-cost','80');
+    await page.selectOption('#purchase-item-0',beef.id);
+    await page.fill('#purchase-qty-0','12.5'); await page.fill('#purchase-cost-0','80');
     await page.locator('.modal button[type=submit]').click();
     await page.waitForSelector('.modal .error');                                  // the cashier sees a network error...
     await page.locator('.modal button[type=submit]').click();                    // ...and simply presses save again
@@ -605,5 +606,101 @@ describe('web UI in a real browser', () => {
     expect(Number(st.on_hand)).toBe(12.5);
     expect(problems.filter((p:string)=>!/Failed to fetch|net::ERR_FAILED/.test(p))).toEqual([]);
     await ctx.close();
+  }, 60_000);
+  it('E16: a butcher receives two products in one delivery (one with lot + expiry), sees the receipt details and the expiry watch list', async () => {
+    const shop=await createShop(api,admin,'pro','Receiving E2E',['butcher']);
+    const items=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
+    const beef=items.find((i:any)=>i.sku==='BUT-BOEUF'), chicken=items.find((i:any)=>i.sku==='BUT-POULET');
+    await api.call('POST','/suppliers',{token:shop.ownerToken,body:{name:'Abattoir Test'}});
+    const in2=new Date(Date.now()+2*86400000).toISOString().slice(0,10);
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,shop.ownerEmail);
+    await page.waitForSelector('#tile-sales');
+    await page.locator('nav.nav').getByRole('link',{name:'Fournisseurs & achats',exact:true}).click();
+    await page.getByRole('button',{name:/Réceptionner une livraison/}).click();
+    await page.selectOption('#purchase-item-0',beef.id);
+    await page.fill('#purchase-qty-0','20'); await page.fill('#purchase-cost-0','90');
+    await page.fill('#purchase-batch-0','L-E2E-1'); await page.fill('#purchase-exp-0',in2);
+    await page.getByRole('button',{name:/Ajouter un article/}).click();
+    await page.selectOption('#purchase-item-1',chicken.id);
+    expect(await page.locator('#purchase-batch-1').count()).toBe(0);               // chicken has no lot tracking: no lot field shown
+    await page.fill('#purchase-qty-1','8'); await page.fill('#purchase-cost-1','25');
+    await page.locator('.modal button[type=submit]').click();
+    await page.waitForFunction(()=>!document.querySelector('.modal'));
+    // the lot that expires in 2 days is listed first thing on the page
+    await page.locator('#expiring-list').getByText(/L-E2E-1/).waitFor();
+    await page.locator('#receipt-list button').first().click();
+    const detail=page.locator('#receipt-detail');
+    await detail.getByText('L-E2E-1').waitFor();
+    await shot(page,'e16-receipt-detail');
+    expect(await detail.innerText()).toMatch(/Poulet/);
+    expect(await detail.locator('.total').innerText()).toMatch(/2[.\s\u202f]?000,00/);       // 20 x 90 + 8 x 25
+    await noLeaks(page);
+    expect(problems).toEqual([]);
+    await ctx.close();
+    // the same page and the receiving dialog on an Arabic phone: right-to-left and no sideways scrolling
+    const mobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(mobile.page,shop.ownerEmail);
+    await mobile.page.waitForSelector('#tile-sales');
+    await mobile.page.locator('nav.nav').getByRole('link',{name:'الموردون والمشتريات'}).click();
+    await mobile.page.locator('#expiring-list').waitFor();
+    await mobile.page.getByRole('button',{name:/تسجيل تسلم بضاعة/}).click();
+    await mobile.page.selectOption('#purchase-item-0',beef.id);
+    await mobile.page.locator('#purchase-exp-0').waitFor();
+    await shot(mobile.page,'e16-receive-mobile-ar');
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(mobile.problems).toEqual([]);
+    await mobile.ctx.close();
+  }, 60_000);
+
+  it('E17: a mechanic changes the owner and plate of a sold car; history shows both owners and the warranty end of the repair', async () => {
+    const shop=await createShop(api,admin,'pro','Vehicle edit E2E',['mechanic']);
+    const items=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
+    const seller=(await api.call('POST','/customers',{token:shop.ownerToken,body:{name:'Client Vendeur'}})).json.id;
+    await api.call('POST','/customers',{token:shop.ownerToken,body:{name:'Client Acheteur'}});
+    const v=(await api.call('POST','/workshop/vehicles',{token:shop.ownerToken,body:{plate:'10-A-100',make:'Peugeot',model:'208',odometerKm:20000,customerId:seller}})).json.id;
+    const q=(await api.call('POST','/workshop/orders',{token:shop.ownerToken,headers:{'idempotency-key':key()},body:{branchId:shop.branchId,vehicleId:v,mileageAtVisit:20000,warrantyDays:90,
+      lines:[{itemId:items.find((i:any)=>i.sku==='MEC-VIDANGE').id,qty:1}]}})).json.id;
+    for(const step of ['approve','start','complete'])await api.call('POST',`/workshop/orders/${q}/${step}`,{token:shop.ownerToken,headers:{'idempotency-key':key()},body:{}});
+    await api.call('POST',`/workshop/orders/${q}/deliver`,{token:shop.ownerToken,headers:{'idempotency-key':key()},body:{payments:[{method:'cash',amount:150}]}});
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,shop.ownerEmail);
+    await page.waitForSelector('#tile-sales');
+    await page.locator('nav.nav').getByRole('link',{name:'Véhicules',exact:true}).click();
+    await page.getByRole('button',{name:'Modifier'}).click();
+    expect(await page.inputValue('#ve-km')).toBe('20000');
+    await page.fill('#ve-plate','20-B-200');
+    await page.selectOption('#ve-customer',{label:'Client Acheteur'});
+    await page.fill('#ve-note','Véhicule vendu');
+    await page.locator('.modal button[type=submit]').click();
+    await page.getByText(/20-B-200 · Peugeot 208/).waitFor();
+    await page.getByText(/Client Acheteur/).waitFor();
+    await page.getByRole('button',{name:'Historique'}).click();
+    const owners=page.locator('#owner-history li');
+    await owners.first().waitFor();
+    expect(await owners.count()).toBe(2);
+    expect(await owners.nth(0).innerText()).toMatch(/Client Acheteur · 20-B-200 .*Véhicule vendu/);
+    expect(await owners.nth(1).innerText()).toMatch(/Client Vendeur · 10-A-100/);
+    expect(await page.locator('#repair-history').innerText()).toMatch(/Sous garantie · Garantie jusqu’au/);
+    await shot(page,'e17-history');
+    await noLeaks(page);
+    expect(problems).toEqual([]);
+    await ctx.close();
+    const mobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(mobile.page,shop.ownerEmail);
+    await mobile.page.waitForSelector('#tile-sales');
+    await mobile.page.locator('nav.nav').getByRole('link',{name:'السيارات'}).click();
+    await mobile.page.getByRole('button',{name:'السجل'}).click();
+    await mobile.page.locator('#owner-history li').first().waitFor();
+    await shot(mobile.page,'e17-history-mobile-ar');
+    expect(await mobile.page.locator('#repair-history').innerText()).toMatch(/داخل الضمان/);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await mobile.page.keyboard.press('Escape');
+    await mobile.page.getByRole('button',{name:'تعديل'}).click();
+    await mobile.page.locator('#ve-customer').waitFor();
+    await shot(mobile.page,'e17-edit-mobile-ar');
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(mobile.problems).toEqual([]);
+    await mobile.ctx.close();
   }, 60_000);
 });

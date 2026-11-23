@@ -200,3 +200,12 @@ tbody tr:hover{background:#fafcfb}
 .invoice-sheet h1{margin:0}.invoice-sheet .meta{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin:.6rem 0}
 @media print{body{background:#fff}.topbar,.nav,.no-print,.toast,.modal-back{display:none!important}main{padding:0!important;max-width:none!important}
 .invoice-sheet{border:0;padding:0;max-width:none}.card{border:0}.print-only{display:block}}
+
+/* a list entry that opens details: looks like text, behaves like a button (keyboard + screen reader) */
+.linklike { background: none; border: 0; padding: 4px 0; color: inherit; font: inherit; text-align: start; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.purchase-line { margin: 8px 0; }
+.modal-head{display:flex;align-items:flex-start;gap:.5rem}
+.modal-head h2{flex:1;margin-top:0}
+.modal-x{background:none;border:0;font-size:1.6rem;line-height:1;min-width:44px;min-height:44px;cursor:pointer;color:inherit;border-radius:10px}
+.modal-x:focus-visible{outline:3px solid #2563eb}
+@media print{.modal-x{display:none}}
