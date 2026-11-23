@@ -48,6 +48,8 @@ CREATE TABLE workshop_order_lines (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   work_order_id uuid NOT NULL,
   item_id uuid NOT NULL,
+  item_name_at_quote text NOT NULL,
+  item_sku_at_quote text NOT NULL,
   qty numeric(14,4) NOT NULL CHECK (qty > 0),
   unit_price numeric(14,4) NOT NULL CHECK (unit_price >= 0),
   line_total numeric(14,2) NOT NULL CHECK (line_total >= 0),
