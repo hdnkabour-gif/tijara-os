@@ -49,9 +49,20 @@ export async function issueInvoiceAndPay(cc: CommandCtx, order: { id: string; cu
     if (bal + due > Number(cust.credit_limit)) throw invalidState(`credit limit exceeded (${bal + due} > ${cust.credit_limit})`);
   }
   const no = await nextInvoiceNo(cc);
+  // Snapshot commercial identity at issuance, not print time: edits must not rewrite old invoices.
   const inv = await cc.client.query(
-    `INSERT INTO invoices (tenant_id, order_id, invoice_no, customer_id, total) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-    [cc.tenantId, order.id, no, order.customer_id, total]);
+    `INSERT INTO invoices (tenant_id, order_id, invoice_no, customer_id, total, display_snapshot)
+      SELECT o.tenant_id, o.id, $2, o.customer_id, $3,
+        jsonb_build_object(
+          'shop', jsonb_build_object('name', t.name, 'company', COALESCE(t.settings->'company','{}'::jsonb)),
+          'branchName', b.name, 'customerName', cu.name, 'customerPhone', cu.phone)
+      FROM sales_orders o
+      JOIN tenants t ON t.id=o.tenant_id
+      JOIN branches b ON b.tenant_id=o.tenant_id AND b.id=o.branch_id
+      LEFT JOIN customers cu ON cu.tenant_id=o.tenant_id AND cu.id=o.customer_id
+      WHERE o.tenant_id=$1 AND o.id=$4 RETURNING id`,
+    [cc.tenantId, no, total, order.id]);
+  if (!inv.rows.length) throw invalidState('order not found when issuing invoice');
   const invoice = { id: inv.rows[0].id as string, customer_id: order.customer_id };
   if (order.customer_id) {
     await cc.client.query(
