@@ -13,6 +13,7 @@ import { serveUi } from './static.js';
 import { registerAdminRoutes } from './admin.js';
 import { registerGrillRoutes } from './grill.js';
 import { registerWorkshopRoutes } from './workshop.js';
+import { registerControlRoutes } from './control.js';
 import type { Handler, Rc } from './kit.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
@@ -386,6 +387,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   registerAdminRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
   registerGrillRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
   registerWorkshopRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
+  registerControlRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform }, { version: d.version ?? 'dev', expectedMigrations: d.expectedMigrations });
 
   // ───────────── dispatcher ─────────────
   const clientIp = (req: http.IncomingMessage) =>

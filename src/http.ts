@@ -27,17 +27,20 @@ export async function readJson(req: http.IncomingMessage): Promise<any> {
 }
 
 export function send(res: http.ServerResponse, status: number, body: unknown, extra: Record<string, string | string[]> = {}) {
-  res.writeHead(status, {
-    ...extra,
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
+  const binary = Buffer.isBuffer(body);
+  const fixed = {
     'x-content-type-options': 'nosniff',
     'x-frame-options': 'DENY',
     'referrer-policy': 'no-referrer',
     'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
     'strict-transport-security': 'max-age=31536000; includeSubDomains',
-  });
-  res.end(JSON.stringify(body));
+  };
+  // JSON: our content-type always wins. Binary (e.g. a shop logo): the handler sets content-type and cache-control,
+  // the security headers above can never be overridden.
+  res.writeHead(status, binary
+    ? { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', ...extra, ...fixed }
+    : { ...extra, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...fixed });
+  res.end(binary ? body : JSON.stringify(body));
 }
 
 // ── validators ──

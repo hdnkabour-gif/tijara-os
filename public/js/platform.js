@@ -85,7 +85,7 @@ function openCreate(activities, plans, done) {
 }
 
 /** Platform super-admin only. Shop owners cannot invoke this UI or its API. */
-function openControls(shop,plans,done){
+export function openControls(shop,plans,done){
   const ar=getLang()==='ar';
   const txt=(fr,arText)=>ar?arText:fr;
   const header=txt('Gérer abonnement & accès','التحكم في الباقة والدخول');

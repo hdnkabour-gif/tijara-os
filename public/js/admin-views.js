@@ -1,3 +1,4 @@
+import { brandingCard } from './control-views.js';
 import { api, confirmBox, errorBox, field, friendly, h, modal, put, toast } from './lib.js';
 import { dateFmt, money, qtyFmt, roleLabel, t, uom } from './i18n.js';
 
@@ -118,6 +119,7 @@ function editRole(r, groups, done) {
 // ───────────── settings: shop identity + branches ─────────────
 export async function settingsView(S) {
   const tenant = await api('GET', '/tenant'); const { branches } = await api('GET', '/branches');
+  const branding = can(S, 'settings.manage') ? await api('GET', '/tenant/branding') : null;
   const wrap = h('div'); const reload = () => settingsView(S).then((v) => wrap.replaceWith(v));
   const c = tenant.company ?? {};
   const inp = (id, v, attrs = {}) => h('input', { id, value: v ?? '', ...attrs });
@@ -142,7 +144,11 @@ export async function settingsView(S) {
           btn(t('del'), async () => {
             if (!(await confirmBox(t('confirmDelete')))) return;
             try { await api('DELETE', `/branches/${b.id}`); toast(t('deleted')); reload(); } catch (e) { toast(friendly(e), true); }
-          }, 'danger')))))))));
+          }, 'danger')))))))),
+    branding && brandingCard(S, branding, async () => {
+      S.branding = await api('GET', '/tenant/branding');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));     // redraw the shell: new colors and logo everywhere
+    }));
   return wrap;
 }
 function nameDialog(title, value, save) {
