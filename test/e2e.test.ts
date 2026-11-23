@@ -52,7 +52,7 @@ describe('web UI in a real browser', () => {
     const slug = uniq('atayib').toLowerCase();
     await page.getByRole('button', { name: /Nouvel établissement/ }).click();
     await page.fill('#sn', 'Atayib E2E'); await page.fill('#ss', slug);
-    await page.getByText('Boucherie').click(); await page.getByText('Grillades').click();
+    await page.locator('#act-butcher').check(); await page.locator('#act-grill').check();
     const ownerEmail = `owner.${slug}@test.local`;
     await page.locator('#self-owner').uncheck();
     await page.fill('#on', 'Owner E2E'); await page.fill('#oe', ownerEmail); await page.fill('#op', PW);
