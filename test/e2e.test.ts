@@ -54,6 +54,7 @@ describe('web UI in a real browser', () => {
     await page.fill('#sn', 'Atayib E2E'); await page.fill('#ss', slug);
     await page.getByText('Boucherie').click(); await page.getByText('Grillades').click();
     const ownerEmail = `owner.${slug}@test.local`;
+    await page.locator('#self-owner').uncheck();
     await page.fill('#on', 'Owner E2E'); await page.fill('#oe', ownerEmail); await page.fill('#op', PW);
     await page.getByRole('button', { name: 'Créer', exact: true }).click();
     await page.waitForSelector(`td:has-text("${slug}")`);
@@ -118,6 +119,28 @@ describe('web UI in a real browser', () => {
     expect(problems).toEqual([]);                                                        // no CSP violations, no script errors
     await ctx.close();
   }, 120_000);
+
+  it('E1b: platform admin creates pilot shop with their own account and opens its dashboard without another password', async () => {
+    const { ctx, page, problems } = await newPage();
+    await uiLogin(page, admin.email);
+    await page.waitForSelector('text=Plateforme');
+    const slug = uniq('pilotui').toLowerCase();
+    await page.getByRole('button', { name: /Nouvel établissement/ }).click();
+    await page.fill('#sn', 'Pilot Atayib');
+    await page.fill('#ss', slug);
+    await page.locator('#act-butcher').check();
+    await page.locator('#act-grill').check();
+    await page.locator('#act-restaurant').check();
+    expect(await page.locator('#self-owner').isChecked()).toBe(true);
+    expect(await page.locator('#oe').isVisible()).toBe(false);
+    await page.getByRole('button', { name: 'Créer', exact: true }).click();
+    await page.waitForSelector('#tile-sales');
+    await page.locator('nav.nav').getByRole('link', { name: 'Produits & services' }).click();
+    await page.waitForSelector('td:has-text("BUT-BOEUF")');
+    expect(await page.locator('td:has-text("EQP-POMPE")').count()).toBe(0);
+    expect(problems).toEqual([]);
+    await ctx.close();
+  });
 
   it('E2 (phone, AR/RTL): grocery owner sells on a 375px screen; layout does not overflow; targets are touch-sized', async () => {
     const adm = admin;
