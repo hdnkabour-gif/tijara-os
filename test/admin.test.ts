@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Api, PW, Shop, createShop, key, platformAdmin, staff, startApp, uniq } from './api-helpers.js';
+import { withTenant } from '../src/db.js';
+import { runtime } from './helpers.js';
 
 let api: Api, admin: { token: string };
 beforeAll(async () => { api = await startApp(); admin = await platformAdmin(api); });
@@ -198,6 +200,22 @@ describe('team management', () => {
     expect(blocked.status).toBe(403);
     expect((await api.call('PATCH', `/users/${master.id}`, { ...j(otherLogin.json.token), body: { name: 'Global Name Hijack' } })).status).toBe(403);
     expect((await api.call('POST', '/auth/login', { body: { email: master.email, password: PW } })).status).toBe(200);
+  });
+
+  it('AD10: a non-platform user with two shop memberships retains control of their own global credentials', async () => {
+    const A = await createShop(api, admin), B = await createShop(api, admin);
+    const shared = await staff(api, A, 'cashier');
+    await withTenant(runtime, { tenantId: B.tenantId }, async (c) => {
+      const role = (await c.query("SELECT id FROM roles WHERE name='cashier'")).rows[0].id;
+      await c.query('INSERT INTO memberships (tenant_id, user_id, role_id) VALUES ($1,$2,$3)', [B.tenantId, shared.userId, role]);
+    });
+    const stolenPassword = await api.call('POST', `/users/${shared.userId}/password`, { ...j(B.ownerToken), body: { password: 'Hostile-Global-Reset-1' } });
+    expect(stolenPassword.status).toBe(403);
+    const globalRename = await api.call('PATCH', `/users/${shared.userId}`, { ...j(B.ownerToken), body: { name: 'Hijacked Name' } });
+    expect(globalRename.status).toBe(403);
+    expect((await api.call('POST', '/auth/login', { body: { email: shared.email, password: PW } })).status).toBe(200);
+    expect((await api.call('POST', '/auth/login', { body: { email: shared.email, password: 'Hostile-Global-Reset-1' } })).status).toBe(401);
+    expect((await users(A)).find((u: any) => u.id === shared.userId)?.name).toBe('cashier');
   });
 });
 
