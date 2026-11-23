@@ -5,10 +5,11 @@ import { describe, expect, it } from 'vitest';
 const ALLOWED: Record<string, string[]> = {
   errors: [], db: [], audit: [],
   auth: [], http: [],
-  api: ['auth', 'audit', 'commands', 'catalog', 'db', 'errors', 'inventory', 'tenancy', 'sales', 'http', 'templates', 'static', 'permissions', 'admin', 'kit'],
+  api: ['auth', 'audit', 'commands', 'catalog', 'db', 'errors', 'inventory', 'tenancy', 'sales', 'http', 'templates', 'static', 'permissions', 'admin', 'grill', 'kit'],
   static: [],
   permissions: [],
   admin: ['audit', 'auth', 'db', 'errors', 'http', 'kit', 'permissions'],
+  grill: ['audit', 'commands', 'db', 'http', 'inventory', 'kit', 'sales'],
   kit: ['auth', 'db'],
   server: ['api', 'db'], migrate: ['bootstrap'], bootstrap: [],           // entrypoints: no business-module dependencies
   commands: ['db', 'errors'],
