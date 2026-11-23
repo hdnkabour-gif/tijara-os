@@ -2,13 +2,18 @@ import { api, errorBox, field, friendly, h, modal, toast, put } from './lib.js';
 import { dateFmt, getLang, t } from './i18n.js';
 
 export async function platformView() {
-  const [{ tenants }, { activities }] = await Promise.all([api('GET', '/platform/tenants'), api('GET', '/activities')]);
+  const [{ tenants }, { activities }, { plans }] = await Promise.all([api('GET', '/platform/tenants'), api('GET', '/activities'), api('GET','/platform/plans')]);
   const wrap = h('div', { class: 'platform-page' });
-  const openNewShop = () => openCreate(activities, () => platformView().then((v) => wrap.replaceWith(v)));
+  const reload = () => platformView().then(v => wrap.replaceWith(v));
+  const openNewShop = () => openCreate(activities, plans, reload);
+  const editShop = (shop) => openControls(shop,plans,reload);
   const rows = tenants.map((x) => h('tr', null,
     h('td', null, x.name), h('td', null, x.slug), h('td', null, x.plan_id),
     h('td', null, (x.activities ?? []).map((a) => h('span', { class: 'badge' }, t(`act_${a}`)))),
-    h('td', { class: 'num' }, String(x.users)), h('td', { class: 'num' }, String(x.items)), h('td', null, dateFmt(x.created_at))));
+    h('td', { class: 'num' }, `${x.users}/${x.max_users}`), h('td', { class: 'num' }, `${x.items}/${x.max_items}`),
+    h('td', null, h('span',{class:x.status==='active'?'badge':'badge bad'},x.status==='active'?(getLang()==='ar'?'نشط':'Actif'):(getLang()==='ar'?'موقوف':'Suspendu'))),
+    h('td',null,h('button',{class:'btn',type:'button',onclick:()=>editShop(x)},getLang()==='ar'?'الإدارة':'Gérer')),
+    h('td', null, dateFmt(x.created_at))));
   put(wrap,
     h('div', { class: 'page-heading' },
       h('div', null,
@@ -36,15 +41,15 @@ export async function platformView() {
               h('div', null, h('b', null, '03'), h('span', null, t('setupDemo')))),
             h('button', { class: 'btn primary', type: 'button', onclick: openNewShop }, t('startFirstShop'))))
       : h('div', { class: 'card tablewrap' }, h('table', null,
-          h('thead', null, h('tr', null, [t('name'), t('slug'), t('plan'), t('activities'), t('usersCount'), t('itemsCount'), t('date')].map((x) => h('th', null, x)))),
+          h('thead', null, h('tr', null, [t('name'), t('slug'), t('plan'), t('activities'), t('usersCount'), t('itemsCount'), getLang()==='ar'?'الحالة':'Statut',getLang()==='ar'?'التحكم':'Gestion',t('date')].map((x) => h('th', null, x)))),
           h('tbody', null, rows))));
   return wrap;
 }
 
-function openCreate(activities, done) {
+function openCreate(activities, plans, done) {
   const err = h('div');
   const name = h('input', { id: 'sn', required: true }), slug = h('input', { id: 'ss', required: true, autocapitalize: 'none', pattern: '[a-z0-9]+(-[a-z0-9]+)*' }),
-    plan = h('select', { id: 'sp' }, h('option', { value: 'pro' }, 'pro'), h('option', { value: 'basic' }, 'basic')),
+    plan = h('select', { id: 'sp' }, plans.map(p=>h('option',{value:p.id,selected:p.id==='pro'},p.name))),
     oname = h('input', { id: 'on', required: true }), oemail = h('input', { id: 'oe', type: 'email', required: true }),
     opw = h('input', { id: 'op', type: 'password', autocomplete: 'new-password', minlength: '10' });
   const selfOwner = h('input', { id: 'self-owner', type: 'checkbox', checked: true });
@@ -77,4 +82,57 @@ function openCreate(activities, done) {
     h('div', { class: 'chips' }, activities.map((a, i) => h('label', { class: 'chip', for: `act-${a.id}` }, checks[i].box, ` ${a.label[getLang()]}`))),
     h('label', { class: 'chip', for: 'self-owner' }, selfOwner, ` ${t('selfOwner')}`), ownerFields, err,
     h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, t('create')), h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, t('cancel')))));
+}
+
+/** Platform super-admin only. Shop owners cannot invoke this UI or its API. */
+function openControls(shop,plans,done){
+  const ar=getLang()==='ar';
+  const txt=(fr,arText)=>ar?arText:fr;
+  const header=txt('Gérer abonnement & accès','التحكم في الباقة والدخول');
+  const plan=h('select',{id:'tenant-plan'},plans.map(p=>h('option',{value:p.id,selected:p.id===shop.plan_id},p.name)));
+  const status=h('select',{id:'tenant-status'},
+    h('option',{value:'active',selected:shop.status==='active'},txt('Actif','نشط')),
+    h('option',{value:'suspended',selected:shop.status==='suspended'},txt('Suspendu','موقوف')));
+  const reason=h('input',{id:'tenant-reason',maxlength:'300',value:shop.status_reason??'',placeholder:txt('Motif obligatoire en cas de suspension','سبب الإيقاف إجباري')});
+  const fields=[
+    ['max_users',txt('Utilisateurs','المستخدمون')],['max_items',txt('Articles','المنتجات')],
+    ['max_branches',txt('Points de vente','الفروع')],['max_customers',txt('Clients','الزبناء')],
+    ['max_monthly_orders',txt('Commandes par mois','الطلبات شهرياً')],
+  ].map(([key,label])=>{
+    const override=shop.overrides?.[key];
+    const input=h('input',{id:'limit-'+key,type:'number',min:'1',max:'10000000',step:'1',
+      placeholder:String(shop[key]??''),value:override==null?'':String(override)});
+    return {key,label,input};
+  });
+  const error=h('div');
+  const submit=h('button',{class:'btn primary',type:'submit'},txt('Enregistrer','حفظ'));
+  const form=h('form',{onsubmit:async(e)=>{
+    e.preventDefault();submit.disabled=true;error.replaceChildren();
+    try{
+      const limits={};
+      for(const f of fields){
+        const v=f.input.value.trim();
+        if(v&&(!Number.isSafeInteger(Number(v))||Number(v)<1||Number(v)>10000000))
+          throw new Error(txt('Limite invalide','الحد غير صالح')+' '+f.label);
+        limits[f.key]=v===''?null:Number(v);
+      }
+      if(status.value==='suspended'&&!reason.value.trim())
+        throw new Error(txt('Précisez le motif de suspension','أدخل سبب إيقاف المحل'));
+      await api('PATCH',`/platform/tenants/${shop.id}/controls`,{
+        plan:plan.value,status:status.value,reason:status.value==='suspended'?reason.value.trim():undefined,limits
+      });
+      toast(txt('Modifications enregistrées','تم حفظ التغييرات'));m.close();done();
+    }catch(ex){
+      error.replaceChildren(errorBox(ex?.message??friendly(ex)));
+    }finally{submit.disabled=false;}
+  }},
+    h('p',{class:'muted'},shop.name+' — '+shop.slug),
+    ...field(txt('Abonnement','الباقة'),plan,'tenant-plan'),
+    ...field(txt('Accès au commerce','حالة المحل'),status,'tenant-status'),
+    ...field(txt('Motif d’arrêt','سبب الإيقاف'),reason,'tenant-reason'),
+    h('h3',null,txt('Limites personnalisées','الحدود الخاصة بالمحل')),
+    h('p',{class:'muted'},txt('Laisser vide pour appliquer la limite du forfait. Réduire une limite ne supprime aucune donnée.','اتركه فارغاً لتطبيق حد الباقة. تقليل الحد لا يحذف البيانات.')),
+    fields.map(f=>h('div',null,...field(f.label,f.input,'limit-'+f.key))),
+    error,h('div',{class:'row'},submit,h('button',{type:'button',class:'btn',onclick:()=>m.close()},t('cancel'))));
+  const m=modal(header,form);
 }
