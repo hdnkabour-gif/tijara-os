@@ -214,7 +214,7 @@ describe('shop identity, printable invoice, journal', () => {
     expect(afterPatch.company).toMatchObject({ legalName: 'SARL Demo', ice: '001234567000089', address: '', footer: 'Only footer updated' });
     expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { company: { legalName: 'x'.repeat(201) } } })).status).toBe(400);
     const t = (await api.call('GET', '/tenant', j(cashier.token))).json;
-    expect(t.name).toBe('Renamed Shop'); expect(t.company).toMatchObject({ legalName: 'SARL Demo', ice: '001234567000089', footer: 'Merci !' });
+    expect(t.name).toBe('Renamed Shop'); expect(t.company).toMatchObject({ legalName: 'SARL Demo', ice: '001234567000089', footer: 'Only footer updated' });
     const sugar = (await api.call('GET', '/items', j(A.ownerToken))).json.items.find((i: any) => i.sku === 'EPI-SUCRE').id;
     await receive(A, sugar, 10);
     const sale = await api.call('POST', '/sales/quick', { ...j(cashier.token), headers: { 'idempotency-key': key() }, body: { branchId: A.branchId, lines: [{ itemId: sugar, qty: 1.5 }], payments: [{ method: 'cash', amount: 10.5 }] } });
