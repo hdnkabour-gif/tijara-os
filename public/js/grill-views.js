@@ -37,9 +37,16 @@ const danger=(err)=>{toast(friendly(err),true);};
 const branchDropdown=(S,current,cb)=>h('select',{id:'ops-branch',onchange:(e)=>cb(e.target.value)},
   S.branches.map((b)=>h('option',{value:b.id,selected:b.id===current},b.name)));
 const formModal=(title,inputs,onSubmit)=>{
-  const err=h('div');
-  const m=modal(title,h('form',{onsubmit:async(e)=>{e.preventDefault();try{await onSubmit();m.close();}catch(ex){err.replaceChildren(h('div',{class:'error',role:'alert'},friendly(ex)));}}},
-    ...inputs,err,h('div',{class:'row'},h('button',{type:'submit',class:'btn primary'},w('save')),btn(w('cancel'),()=>m.close()))));
+  const err=h('div'),submit=h('button',{type:'submit',class:'btn primary'},w('save'));
+  let busy=false;
+  const m=modal(title,h('form',{onsubmit:async(e)=>{
+    e.preventDefault();
+    if(busy)return;
+    busy=true;submit.disabled=true;
+    try{await onSubmit();m.close();}
+    catch(ex){err.replaceChildren(h('div',{class:'error',role:'alert'},friendly(ex)));}
+    finally{busy=false;submit.disabled=false;}
+  }},...inputs,err,h('div',{class:'row'},submit,btn(w('cancel'),()=>m.close()))));
   return m;
 };
 const select=(id,list,mapper)=>h('select',{id},list.map(mapper));
