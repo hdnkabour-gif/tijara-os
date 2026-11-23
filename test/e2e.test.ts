@@ -153,6 +153,27 @@ describe('web UI in a real browser', () => {
     await mobile.ctx.close();
   });
 
+  it('E13: platform admin suspends and restores one shop through the responsive UI with no data deletion',async()=>{
+    const shop=await createShop(api,admin,'pro','Suspension UI Pilot',['grocery']);
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,admin.email);
+    await page.waitForSelector('tr:has-text("Suspension UI Pilot")');
+    const row=page.locator('tr:has-text("Suspension UI Pilot")');
+    await row.getByRole('button',{name:'Gérer'}).click();
+    await page.locator('#tenant-status').selectOption('suspended');
+    await page.fill('#tenant-reason','Maintenance temporaire');
+    await page.locator('.modal button[type=submit]').click();
+    await page.waitForSelector('tr:has-text("Suspension UI Pilot") >> text=Suspendu');
+    expect((await api.call('GET','/items',{token:shop.ownerToken})).status).toBe(423);
+    await page.locator('tr:has-text("Suspension UI Pilot")').getByRole('button',{name:'Gérer'}).click();
+    await page.locator('#tenant-status').selectOption('active');
+    await page.locator('.modal button[type=submit]').click();
+    await page.waitForSelector('tr:has-text("Suspension UI Pilot") >> text=Actif');
+    expect((await api.call('GET','/items',{token:shop.ownerToken})).status).toBe(200);
+    expect(problems).toEqual([]);
+    await ctx.close();
+  });
+
   it('E1 (desktop, FR): platform admin creates a shop by activity; owner runs a full weighed sale with grilling; stock, dashboard and cancellation reflect it', async () => {
     const { ctx, page, problems } = await newPage();
     // 1) platform administrator creates the shop through the UI
