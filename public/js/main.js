@@ -6,6 +6,7 @@ import { customersView, dashboardView, invoicesView, itemsView, stockView } from
 import { invoiceView, journalView, rolesView, settingsView, teamView } from './admin-views.js';
 import { posView } from './pos.js';
 import { grillView, suppliersView, cashView, transformsView } from './grill-views.js';
+import { vehiclesView, workshopView, workshopRemindersView } from './workshop-views.js';
 
 const root = document.getElementById('app');
 const S = { me: null, tenant: null, branches: [], route: '' };
@@ -23,6 +24,9 @@ const ROUTES = [
   { path: 'suppliers', label: 'nav_suppliers', show: () => can('purchases.view'), view: suppliersView },
   { path: 'cashbook', label: 'nav_cashbook', show: () => can('cash.view'), view: cashView },
   { path: 'transforms', label: 'nav_transforms', show: () => can('production.manage'), view: transformsView },
+  { path: 'vehicles', label: 'nav_vehicles', show: () => can('workshop.view'), view: vehiclesView },
+  { path: 'workshop', label: 'nav_workshop', show: () => can('workshop.view'), view: workshopView },
+  { path: 'reminders', label: 'nav_reminders', show: () => can('workshop.view'), view: workshopRemindersView },
   { path: 'users', label: 'nav_users', show: () => can('users.manage'), view: teamView },
   { path: 'roles', label: 'nav_roles', show: () => can('users.manage'), view: rolesView },
   { path: 'settings', label: 'nav_settings', show: () => can('settings.manage') || can('branches.manage'), view: settingsView },
