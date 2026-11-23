@@ -221,3 +221,53 @@ describe('PR-A vehicles: owner and plate changes, warranty end, reminders',()=>{
     expect(due).toHaveLength(0);
   });
 });
+
+describe('PR-A branch scope of vehicles (two-branch shop, branch-limited mechanic)',()=>{
+  it('RV5: a mechanic of branch A never sees, edits or quotes a car that belongs only to branch B or to the whole shop',async()=>{
+    const A=await createShop(api,admin,'pro','Two-branch garage',['mechanic']);
+    const items=(await api.call('GET','/items',as(A.ownerToken))).json.items;
+    const b2=(await api.call('POST','/branches',{token:A.ownerToken,body:{name:'Branch B'}})).json.id as string;
+    expect(b2).toBeTruthy();
+    const owner=(await api.call('POST','/customers',{token:A.ownerToken,body:{name:'Branch B client'}})).json.id;
+    const add=async(plate:string,body:object)=>(await api.call('POST','/workshop/vehicles',{token:A.ownerToken,body:{plate,make:'Dacia',model:'Duster',odometerKm:1000,...body}}));
+    const vA=(await add('10-A-0001',{branchId:A.branchId})).json.id;
+    const vB=(await add('20-B-0002',{branchId:b2,customerId:owner})).json.id;
+    const vShop=(await add('30-S-0003',{})).json.id;                                   // owner leaves it shop-wide
+    expect((await api.call('POST','/roles',{token:A.ownerToken,body:{name:'mech_a',permissions:['workshop.view','workshop.manage','customers.view']}})).status).toBe(201);
+    const m=await staff(api,A,'mech_a',[A.branchId]);
+    const quote=(token:string,branchId:string,vehicleId:string)=>api.call('POST','/workshop/orders',{token,headers:{'idempotency-key':key()},
+      body:{branchId,vehicleId,mileageAtVisit:1000,lines:[{itemId:sku(items,'MEC-VIDANGE'),qty:1}]}});
+
+    const plates=async()=>(await api.call('GET','/workshop/vehicles',as(m.token))).json.vehicles.map((v:any)=>v.plate).sort();
+    expect(await plates()).toEqual(['10-A-0001']);
+    expect((await api.call('GET','/workshop/vehicles?q=20-B',as(m.token))).json.vehicles).toHaveLength(0);   // search cannot reveal it either
+    for(const v of [vB,vShop]){
+      const detail=await api.call('GET',`/workshop/vehicles/${v}`,as(m.token));
+      expect(detail.status).toBe(404);
+      expect(JSON.stringify(detail.json)).not.toContain('Branch B client');
+      expect((await api.call('PATCH',`/workshop/vehicles/${v}`,{token:m.token,body:{model:'X'}})).status).toBe(404);
+      expect((await quote(m.token,A.branchId,v)).status).toBe(404);
+    }
+    // a car registered by the mechanic lands in their branch; registering into branch B is refused
+    const mine=await api.call('POST','/workshop/vehicles',{token:m.token,body:{plate:'40-A-0004',make:'Kia',model:'Rio'}});
+    expect(mine.status).toBe(201);
+    expect((await api.call('GET',`/workshop/vehicles/${mine.json.id}`,as(m.token))).json.vehicle.branch_id).toBe(A.branchId);
+    expect((await api.call('POST','/workshop/vehicles',{token:m.token,body:{plate:'50-B-0005',make:'Kia',model:'Rio',branchId:b2}})).status).toBe(403);
+
+    // the branch-B car visits branch A (the owner opens the job): now the mechanic sees the car, but only the branch-A repair
+    expect((await quote(A.ownerToken,b2,vB)).status).toBe(201);
+    const visitA=await quote(A.ownerToken,A.branchId,vB);
+    expect(visitA.status).toBe(201);
+    expect(await plates()).toEqual(['10-A-0001','20-B-0002','40-A-0004']);
+    const seen=(await api.call('GET',`/workshop/vehicles/${vB}`,as(m.token))).json;
+    expect(seen.repairs.map((r:any)=>r.id)).toEqual([visitA.json.id]);
+    expect((await api.call('GET',`/workshop/vehicles/${vB}`,as(A.ownerToken))).json.repairs).toHaveLength(2);
+
+    // an employee of BOTH branches must say where the car is registered
+    const both=await staff(api,A,'mech_a',[A.branchId,b2]);
+    expect((await api.call('POST','/workshop/vehicles',{token:both.token,body:{plate:'60-X-0006',make:'Kia',model:'Rio'}})).status).toBe(400);
+    expect((await api.call('POST','/workshop/vehicles',{token:both.token,body:{plate:'60-X-0006',make:'Kia',model:'Rio',branchId:b2}})).status).toBe(201);
+    // the owner (all branches) still sees every car
+    expect((await api.call('GET','/workshop/vehicles',as(A.ownerToken))).json.vehicles).toHaveLength(5);
+  });
+});

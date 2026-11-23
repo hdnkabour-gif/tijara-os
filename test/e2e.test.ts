@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Api, PW, createShop, key, platformAdmin, startApp, uniq } from './api-helpers.js';
+import { Api, PW, createShop, key, platformAdmin, staff, startApp, uniq } from './api-helpers.js';
 
 // Real browser tests (Chromium via Playwright): desktop + phone viewport, French + Arabic, security properties of the web UI.
 const { chromium } = createRequire(import.meta.url)('playwright');
@@ -700,6 +700,25 @@ describe('web UI in a real browser', () => {
     await mobile.page.locator('#ve-customer').waitFor();
     await shot(mobile.page,'e17-edit-mobile-ar');
     expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(mobile.problems).toEqual([]);
+    await mobile.ctx.close();
+  }, 60_000);
+  it('E18: on an Arabic phone, a mechanic limited to branch A sees only branch-A cars (no plate or owner of branch B)', async () => {
+    const shop=await createShop(api,admin,'pro','Two branches E2E',['mechanic']);
+    const b2=(await api.call('POST','/branches',{token:shop.ownerToken,body:{name:'Branch B'}})).json.id;
+    const other=(await api.call('POST','/customers',{token:shop.ownerToken,body:{name:'Client Branche B'}})).json.id;
+    await api.call('POST','/workshop/vehicles',{token:shop.ownerToken,body:{plate:'11-A-111',make:'Dacia',model:'Logan',branchId:shop.branchId}});
+    await api.call('POST','/workshop/vehicles',{token:shop.ownerToken,body:{plate:'22-B-222',make:'Renault',model:'Kangoo',branchId:b2,customerId:other}});
+    await api.call('POST','/roles',{token:shop.ownerToken,body:{name:'mech_a',permissions:['workshop.view','workshop.manage','customers.view']}});
+    const m=await staff(api,shop,'mech_a',[shop.branchId]);
+    const mobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(mobile.page,m.email);
+    await mobile.page.locator('nav.nav').getByRole('link',{name:'السيارات'}).click();
+    await mobile.page.getByText(/11-A-111/).waitFor();
+    const body=await mobile.page.evaluate(()=>document.body.innerText);
+    expect(body).not.toMatch(/22-B-222|Kangoo|Client Branche B/);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await shot(mobile.page,'e18-branch-a-mobile-ar');
     expect(mobile.problems).toEqual([]);
     await mobile.ctx.close();
   }, 60_000);

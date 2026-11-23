@@ -67,9 +67,12 @@ export async function vehiclesView(S){
       const plate=val('v-plate','','text',{dir:'ltr'}),make=val('v-make',''),model=val('v-model',''),vin=val('v-vin','','text',{dir:'ltr'}),mileage=number('v-km');
       const customers=S.me.permissions.includes('customers.view')?(await api('GET','/customers')).customers.filter(c=>c.active):[];
       const customer=select('v-customer',[opt('',w('noCustomer')),...customers.map(c=>opt(c.id,c.name))]);
+      // the registering branch decides which branch-limited staff can see the car
+      const home=select('v-branch',S.branches.map((b,i)=>opt(b.id,b.name,i===0)));
+      const branchField=S.branches.length>1?field(w('branch'),home,'v-branch'):[];
       formModal(w('register'),[...field(w('plate'),plate,'v-plate'),...field(w('make'),make,'v-make'),...field(w('model'),model,'v-model'),
-        ...field(w('vin'),vin,'v-vin'),...field(w('mileage'),mileage,'v-km'),...field(w('customer'),customer,'v-customer')],async()=>{
-          await api('POST','/workshop/vehicles',{plate:plate.value,make:make.value,model:model.value,vin:vin.value||null,
+        ...field(w('vin'),vin,'v-vin'),...field(w('mileage'),mileage,'v-km'),...field(w('customer'),customer,'v-customer'),...branchField],async()=>{
+          await api('POST','/workshop/vehicles',{branchId:home.value||undefined,plate:plate.value,make:make.value,model:model.value,vin:vin.value||null,
             odometerKm:Number(mileage.value),customerId:customer.value||null});
           toast(w('sent'));await render();
         });

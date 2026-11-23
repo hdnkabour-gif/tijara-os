@@ -19,6 +19,11 @@ const WARRANTY_UNTIL=`CASE WHEN w.delivered_at IS NOT NULL AND w.warranty_days>0
 const hideCustomer=<T extends Record<string,any>>(a:Authz,row:T):T=>
   a.permissions.includes('customers.view')?row:{...row,customer_id:null,customer_name:null};
 
+/** Branch scope for cars: all-branch users see every car; branch-scoped staff see a car whose home branch, or one of
+ *  whose repairs, is in their scope. n = index of the SQL parameter holding a.branchIds. */
+const VISIBLE=(n:number)=>`(cardinality(${'$'+n}::uuid[])=0 OR v.branch_id=ANY(${'$'+n}::uuid[])
+  OR EXISTS (SELECT 1 FROM workshop_orders wo WHERE wo.tenant_id=v.tenant_id AND wo.vehicle_id=v.id AND wo.branch_id=ANY(${'$'+n}::uuid[])))`;
+
 export function registerWorkshopRoutes(k:Kit){
   const {add,authorize,runtime,idemKey}=k;
   const protectedOrder=async(a:Authz,id:string)=>{
@@ -33,10 +38,11 @@ export function registerWorkshopRoutes(k:Kit){
     const q=(rc.query.get('q')??'').trim();
     if(q.length>80)throw bad('search too long');
     const vehicles=(await withTenant(runtime,a.ctx,c=>c.query(
-      `SELECT v.id,v.customer_id,v.plate,v.vin,v.make,v.model,v.odometer_km,v.updated_at,c.name AS customer_name
+      `SELECT v.id,v.branch_id,v.customer_id,v.plate,v.vin,v.make,v.model,v.odometer_km,v.updated_at,c.name AS customer_name
          FROM workshop_vehicles v LEFT JOIN customers c ON c.tenant_id=v.tenant_id AND c.id=v.customer_id
         WHERE ($1::text='' OR v.plate ILIKE '%'||$1||'%' OR v.make ILIKE '%'||$1||'%' OR v.model ILIKE '%'||$1||'%')
-        ORDER BY v.updated_at DESC LIMIT 200`,[q]))).rows;
+          AND ${VISIBLE(2)}
+        ORDER BY v.updated_at DESC LIMIT 200`,[q,a.branchIds]))).rows;
     return {body:{vehicles:vehicles.map(v=>hideCustomer(a,v))}};
   });
   add('POST','/workshop/vehicles','session',async(rc)=>{
@@ -45,10 +51,15 @@ export function registerWorkshopRoutes(k:Kit){
       model:str(b.model,'model',80),customerId:optUuid(b.customerId,'customerId'),
       odometerKm:num(b.odometerKm??0,'odometerKm',{min:0})};
     if(!Number.isSafeInteger(v.odometerKm))throw bad('odometerKm must be an integer');
+    // home branch: given (and in scope), or the only branch of a single-branch employee; all-branch users may leave it shop-wide
+    let branchId=optUuid(b.branchId,'branchId')??null;
+    if(branchId)a.assertBranch(branchId);
+    else if(a.branchIds.length===1)branchId=a.branchIds[0];
+    else if(a.branchIds.length>1)throw bad('branchId is required: choose the branch that registers the vehicle');
     const id=await withTenant(runtime,a.ctx,async(c)=>{
-      const rows=await c.query(`INSERT INTO workshop_vehicles (tenant_id,customer_id,plate,vin,make,model,odometer_km)
-        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-        [a.ctx.tenantId,v.customerId??null,v.plate,v.vin,v.make,v.model,v.odometerKm]);
+      const rows=await c.query(`INSERT INTO workshop_vehicles (tenant_id,customer_id,plate,vin,make,model,odometer_km,branch_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        [a.ctx.tenantId,v.customerId??null,v.plate,v.vin,v.make,v.model,v.odometerKm,branchId]);
       const id=rows.rows[0].id;
       await c.query('INSERT INTO workshop_vehicle_owners (tenant_id,vehicle_id,customer_id,plate,changed_by,note) VALUES ($1,$2,$3,$4,$5,$6)',
         [a.ctx.tenantId,id,v.customerId??null,v.plate,a.ctx.userId??null,'initial']);
@@ -72,7 +83,8 @@ export function registerWorkshopRoutes(k:Kit){
     if(make===null&&model===null&&plate===null&&!vinGiven&&!ownerGiven&&odometer===null)throw bad('nothing to update');
     if(ownerGiven&&!a.permissions.includes('customers.view'))throw new HttpError(403,'FORBIDDEN','customers.view required to change the owner');
     await withTenant(runtime,a.ctx,async(c)=>{
-      const old=(await c.query('SELECT plate,vin,make,model,customer_id,odometer_km FROM workshop_vehicles WHERE id=$1 FOR UPDATE',[id])).rows[0];
+      const old=(await c.query(`SELECT v.plate,v.vin,v.make,v.model,v.customer_id,v.odometer_km FROM workshop_vehicles v
+        WHERE v.id=$1 AND ${VISIBLE(2)} FOR UPDATE OF v`,[id,a.branchIds])).rows[0];
       if(!old)throw new HttpError(404,'NOT_FOUND','vehicle not found');
       if(odometer!==null&&odometer<Number(old.odometer_km))throw new HttpError(409,'INVALID_STATE','odometer cannot move backwards');
       if(ownerGiven&&customerId!==null){
@@ -102,8 +114,9 @@ export function registerWorkshopRoutes(k:Kit){
   add('GET','/workshop/vehicles/:id','session',async(rc)=>{
     const a=await authorize(rc,'workshop.view'),id=uuid(rc.params.id,'id');
     const out=await withTenant(runtime,a.ctx,async(c)=>{
-      const vehicle=(await c.query(`SELECT v.id,v.customer_id,v.plate,v.vin,v.make,v.model,v.odometer_km,v.created_at,v.updated_at,c.name AS customer_name
-        FROM workshop_vehicles v LEFT JOIN customers c ON c.tenant_id=v.tenant_id AND c.id=v.customer_id WHERE v.id=$1`,[id])).rows[0];
+      const vehicle=(await c.query(`SELECT v.id,v.branch_id,v.customer_id,v.plate,v.vin,v.make,v.model,v.odometer_km,v.created_at,v.updated_at,c.name AS customer_name
+        FROM workshop_vehicles v LEFT JOIN customers c ON c.tenant_id=v.tenant_id AND c.id=v.customer_id
+        WHERE v.id=$1 AND ${VISIBLE(2)}`,[id,a.branchIds])).rows[0];
       if(!vehicle)throw new HttpError(404,'NOT_FOUND','vehicle not found');
       const owners=(await c.query(`SELECT o.customer_id,c.name AS customer_name,o.plate,o.changed_at,o.note,u.name AS changed_by
         FROM workshop_vehicle_owners o LEFT JOIN customers c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id
@@ -159,7 +172,7 @@ export function registerWorkshopRoutes(k:Kit){
       // Time-dependent check lives inside the command: a replay of an already committed quote returns the stored result
       // even after the date has passed, instead of a 400 that would hide the quote from the client.
       if(p.nextServiceDate&&p.nextServiceDate<=shopToday())throw bad('nextServiceDate must be in the future');
-      const vehicle=(await cc.client.query('SELECT * FROM workshop_vehicles WHERE id=$1 FOR UPDATE',[vehicleId])).rows[0];
+      const vehicle=(await cc.client.query(`SELECT v.* FROM workshop_vehicles v WHERE v.id=$1 AND ${VISIBLE(2)} FOR UPDATE OF v`,[vehicleId,a.branchIds])).rows[0];
       if(!vehicle)throw new HttpError(404,'NOT_FOUND','vehicle not found');
       if(mileage<Number(vehicle.odometer_km))throw new HttpError(409,'INVALID_STATE','mileage is lower than recorded odometer');
       const id=(await cc.client.query(`INSERT INTO workshop_orders (tenant_id,branch_id,vehicle_id,customer_id,issue_note,
