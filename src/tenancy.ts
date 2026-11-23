@@ -6,8 +6,8 @@ import { ACTIVITIES } from './templates.js';
 const CAT = ['catalog.view', 'catalog.manage', 'stock.view', 'stock.receive', 'stock.adjust', 'sale.view', 'sale.create', 'sale.discount',
   'sale.price_override', 'sale.void', 'customers.view', 'customers.manage', 'branches.view', 'report.view'];
 export const DEFAULT_ROLES: Record<string, string[]> = {
-  owner: [...CAT, 'approvals.decide', 'report.view_profit', 'users.manage', 'branches.manage', 'audit.view', 'settings.manage'],
-  manager: [...CAT, 'approvals.decide', 'audit.view'],
+  owner: [...CAT, 'approvals.decide', 'report.view_profit', 'users.manage', 'branches.manage', 'audit.view', 'settings.manage', 'kitchen.view','kitchen.manage','purchases.view','purchases.manage','cash.view','cash.manage','production.manage'],
+  manager: [...CAT, 'approvals.decide', 'audit.view','kitchen.view','kitchen.manage','purchases.view','cash.view','cash.manage'],
   cashier: ['catalog.view', 'stock.view', 'sale.view', 'sale.create', 'customers.view', 'branches.view'],
 };
 

@@ -5,6 +5,7 @@ import { platformView } from './platform.js';
 import { customersView, dashboardView, invoicesView, itemsView, stockView } from './shop-views.js';
 import { invoiceView, journalView, rolesView, settingsView, teamView } from './admin-views.js';
 import { posView } from './pos.js';
+import { grillView, suppliersView, cashView, transformsView } from './grill-views.js';
 
 const root = document.getElementById('app');
 const S = { me: null, tenant: null, branches: [], route: '' };
@@ -18,6 +19,10 @@ const ROUTES = [
   { path: 'stock', label: 'nav_stock', show: () => can('stock.view'), view: stockView },
   { path: 'customers', label: 'nav_customers', show: () => can('customers.view'), view: customersView },
   { path: 'invoices', label: 'nav_invoices', show: () => can('sale.view'), view: invoicesView },
+  { path: 'grill', label: 'nav_grill', show: () => can('kitchen.view'), view: grillView },
+  { path: 'suppliers', label: 'nav_suppliers', show: () => can('purchases.view'), view: suppliersView },
+  { path: 'cashbook', label: 'nav_cashbook', show: () => can('cash.view'), view: cashView },
+  { path: 'transforms', label: 'nav_transforms', show: () => can('production.manage'), view: transformsView },
   { path: 'users', label: 'nav_users', show: () => can('users.manage'), view: teamView },
   { path: 'roles', label: 'nav_roles', show: () => can('users.manage'), view: rolesView },
   { path: 'settings', label: 'nav_settings', show: () => can('settings.manage') || can('branches.manage'), view: settingsView },
