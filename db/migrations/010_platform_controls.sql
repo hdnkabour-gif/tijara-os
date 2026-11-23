@@ -4,6 +4,18 @@ ALTER TABLE tenants ADD COLUMN status text NOT NULL DEFAULT 'active'
   CHECK(status IN ('active','suspended'));
 ALTER TABLE tenants ADD COLUMN status_reason text;
 ALTER TABLE tenants ADD COLUMN status_changed_at timestamptz;
+ALTER TABLE tenants ADD COLUMN trial_expires_at timestamptz;
+
+CREATE FUNCTION set_trial_window() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+  IF NEW.plan_id='trial' AND (TG_OP='INSERT' OR OLD.plan_id IS DISTINCT FROM NEW.plan_id) THEN
+    NEW.trial_expires_at=now()+interval '14 days';
+  END IF;
+  RETURN NEW;
+END $;
+CREATE TRIGGER trg_tenant_trial BEFORE INSERT OR UPDATE OF plan_id ON tenants
+  FOR EACH ROW EXECUTE FUNCTION set_trial_window();
+UPDATE tenants SET trial_expires_at=now()+interval '14 days' WHERE plan_id='trial' AND trial_expires_at IS NULL;
 
 ALTER TABLE plans
   ADD COLUMN max_branches int NOT NULL DEFAULT 2,
@@ -142,7 +154,7 @@ BEGIN
     END LOOP;
   END IF;
   PERFORM set_config('app.tenant_id',p_tenant::text,true);
-  SELECT jsonb_build_object('plan',t.plan_id,'status',t.status,'reason',t.status_reason,'limits',to_jsonb(q))
+  SELECT jsonb_build_object('plan',t.plan_id,'status',t.status,'reason',t.status_reason,'trialEnd',t.trial_expires_at,'limits',to_jsonb(q))
     INTO v_before FROM tenants t LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=p_tenant FOR UPDATE OF t;
   IF v_before IS NULL THEN RETURN false; END IF;
   UPDATE tenants
@@ -164,7 +176,7 @@ BEGIN
       feature_overrides=COALESCE(p_features,feature_overrides)
       WHERE tenant_id=p_tenant;
   END IF;
-  SELECT jsonb_build_object('plan',t.plan_id,'status',t.status,'reason',t.status_reason,'limits',to_jsonb(q))
+  SELECT jsonb_build_object('plan',t.plan_id,'status',t.status,'reason',t.status_reason,'trialEnd',t.trial_expires_at,'limits',to_jsonb(q))
     INTO v_after FROM tenants t LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=p_tenant;
   INSERT INTO platform_audit(actor_user_id,action,meta)
     VALUES(p_actor,'tenant.controls_changed',jsonb_build_object('tenantId',p_tenant,'before',v_before,'after',v_after));
@@ -174,7 +186,7 @@ REVOKE ALL ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jso
 GRANT EXECUTE ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jsonb,jsonb) TO app_platform;
 
 CREATE FUNCTION platform_list_tenant_controls()
-RETURNS TABLE(id uuid,name text,slug text,plan_id text,activities jsonb,status text,status_reason text,
+RETURNS TABLE(id uuid,name text,slug text,plan_id text,activities jsonb,status text,status_reason text,trial_expires_at timestamptz,
   max_users int,max_items int,max_branches int,max_customers int,max_monthly_orders int,
   overrides jsonb,features jsonb,feature_overrides jsonb,users int,items int,branches int,customers int,monthly_orders int,created_at timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
@@ -182,7 +194,7 @@ DECLARE r record;
 BEGIN
   FOR r IN
     SELECT t.id tid,t.name tname,t.slug tslug,t.plan_id tplan,t.status tstatus,t.status_reason treason,
-           t.created_at tcreated,t.settings->'activities' tactivities,p.features tfeatures,
+           t.created_at tcreated,t.settings->'activities' tactivities,t.trial_expires_at ttrial,p.features tfeatures,
            COALESCE(q.max_users,p.max_users) ulimit,COALESCE(q.max_items,p.max_items) ilimit,
            COALESCE(q.max_branches,p.max_branches) blimit,COALESCE(q.max_customers,p.max_customers) climit,
            COALESCE(q.max_monthly_orders,p.max_monthly_orders) olimit,to_jsonb(q) qos,
@@ -191,7 +203,8 @@ BEGIN
       ORDER BY t.created_at DESC
   LOOP
     PERFORM set_config('app.tenant_id',r.tid::text,true);
-    RETURN QUERY SELECT r.tid,r.tname,r.tslug,r.tplan,r.tactivities,r.tstatus,r.treason,
+    RETURN QUERY SELECT r.tid,r.tname,r.tslug,r.tplan,r.tactivities,
+        CASE WHEN r.tplan='trial' AND r.ttrial<=now() THEN 'trial_expired' ELSE r.tstatus END,r.treason,r.ttrial,
         r.ulimit,r.ilimit,r.blimit,r.climit,r.olimit,
         COALESCE(r.qos,'{}'::jsonb),r.tfeatures,r.tfeature_overrides,
         (SELECT count(*)::int FROM memberships m WHERE m.tenant_id=r.tid AND m.active),
