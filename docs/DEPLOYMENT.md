@@ -31,6 +31,7 @@
 - الاسترجاع: `scripts/restore-from-backup.sh file.dump.enc <db-url>`: يرفض الملف إن لم يطابق checksum أو لم يُفك بالعبارة.
 - **كل هذا مُختبَر محلياً** على وجهة ملفات (`test/backup.test.ts`: التشفير، الاسترجاع بأرقام مطابقة، رفض الملف المعبوث به، التنبيه، الاحتفاظ). **لم يُختبَر ضد R2 فعلياً** لعدم توفر الحساب.
 - لتفعيله تحتاج: bucket خاص في R2، ورمز API بصلاحية Object Read & Write **لذلك الـbucket فقط**، ثم خدمة Railway جديدة من `Dockerfile.backup` بجدول Cron يومي ومتغيرات: `BACKUP_DATABASE_URL` (دور نسخ مخصص للقراءة)، `BACKUP_PASSPHRASE` (≥24 حرفاً، تُحفظ في مكان **غير** مكان النسخ)، `BACKUP_DEST=s3://<bucket>/tijara`، `S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com`، `AWS_ACCESS_KEY_ID`، `AWS_SECRET_ACCESS_KEY`، `AWS_DEFAULT_REGION=auto`، `ALERT_WEBHOOK_URL`. ثم **اختبر استرجاعاً من ملف محفوظ في R2** وسجّل التاريخ هنا.
+- كل تشغيل لـ`backup-job.sh` يسجّل نتيجته (نجاح/فشل، نوع الوجهة `s3` أو `file`، الاسم والحجم، دون أي سر) في `platform_backup_events`، ويظهر ذلك في «Control Center». لتسجيل **اختبار الاسترجاع** شغّل `restore-from-backup.sh` مع `REPORT_DATABASE_URL` (رابط دور النسخ نفسه)؛ لا يستطيع دورا التطبيق تسجيل نسخة وهمية.
 
 ## حماية الفرع `main`
 حماية الفروع في المستودعات الخاصة تتطلب خطة GitHub مدفوعة؛ المستودع يبقى **خاصاً**. بديل مؤقت: لا دمج ولا دفع مباشر إلى `main` إلا بعد CI أخضر ومراجعة يدوية (وRailway لا ينشر إلا بعد نجاح CI عبر *Wait for CI*).
