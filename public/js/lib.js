@@ -69,9 +69,13 @@ export function modal(title, content, { onClose } = {}) {
   const close = () => { back.remove(); onClose?.(); };
   const back = h('div', { class: 'modal-back', role: 'dialog', 'aria-modal': 'true', 'aria-label': title,
     onclick: (e) => { if (e.target === back) close(); }, onkeydown: (e) => { if (e.key === 'Escape') close(); } },
-    h('div', { class: 'modal' }, h('h2', null, title), content));
+    h('div', { class: 'modal' },
+      h('div', { class: 'modal-head' }, h('h2', null, title),
+        h('button', { type: 'button', class: 'modal-x', 'aria-label': t('close'), onclick: () => close() }, '×')),
+      content));
   document.body.appendChild(back);
-  back.querySelector('input,select,textarea,button')?.focus();
+  // focus the first field of the content; a read-only dialog focuses its close button, so Escape always works
+  (content.querySelector?.('input,select,textarea,button') ?? back.querySelector('.modal-x'))?.focus();
   return { close };
 }
 

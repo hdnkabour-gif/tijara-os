@@ -123,6 +123,8 @@ export function money(v) {
   return new Intl.NumberFormat(lang === 'ar' ? 'ar-MA-u-nu-latn' : 'fr-MA', { style: 'currency', currency: 'MAD', minimumFractionDigits: 2 }).format(n);
 }
 export const qtyFmt = (v) => new Intl.NumberFormat(lang === 'ar' ? 'ar-MA-u-nu-latn' : 'fr-MA', { maximumFractionDigits: 3 }).format(Number(v) || 0);
+/** A calendar day 'YYYY-MM-DD' (no time, no timezone shift). */
+export const dayFmt = (v) => (v ? new Date(`${String(v).slice(0, 10)}T12:00:00Z`).toLocaleDateString(lang === 'ar' ? 'ar-MA-u-nu-latn' : 'fr-MA', { timeZone: 'UTC' }) : '');
 export const dateFmt = (v) => new Date(v).toLocaleString(lang === 'ar' ? 'ar-MA-u-nu-latn' : 'fr-MA', { dateStyle: 'short', timeStyle: 'short' });
 
 export const uom = (u) => (lang === 'ar' ? ({ kg: 'كلغ', g: 'غ', l: 'لتر', unit: 'قطعة' }[u] ?? u) : (u === 'unit' ? 'pièce' : u));

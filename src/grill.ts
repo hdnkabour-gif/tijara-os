@@ -1,7 +1,8 @@
 import { audit } from './audit.js';
 import { runCommand } from './commands.js';
 import { withTenant } from './db.js';
-import { HttpError, arr, bad, num, optNum, optStr, optUuid, oneOf, str, uuid } from './http.js';
+import { SHOP_TZ, shopToday } from './clock.js';
+import { HttpError, arr, bad, num, optDate, optNum, optStr, optUuid, oneOf, str, uuid } from './http.js';
 import { consumeDirect, receiveStock } from './inventory.js';
 import type { Kit, Authz } from './kit.js';
 import { confirmOrder, createOrder, markReady, payOrder, startPreparation } from './sales.js';
@@ -144,28 +145,80 @@ export function registerGrillRoutes(k: Kit) {
          ORDER BY r.created_at DESC LIMIT 100`,[branch??null,a.branchIds]))).rows;
     return { body: { receipts: rows } };
   });
+  add('GET','/purchase-receipts/:id','session',async (rc)=>{
+    const a=await authorize(rc,'purchases.view'),id=uuid(rc.params.id,'id');
+    const out=await withTenant(runtime,a.ctx,async(c)=>{
+      const receipt=(await c.query(`SELECT r.id,r.branch_id,r.reference,r.total,r.created_at,s.name AS supplier,u.name AS received_by
+        FROM purchase_receipts r JOIN suppliers s ON s.tenant_id=r.tenant_id AND s.id=r.supplier_id
+        LEFT JOIN users u ON u.id=r.created_by WHERE r.id=$1`,[id])).rows[0];
+      if(!receipt)throw new HttpError(404,'NOT_FOUND','receipt not found');
+      a.assertBranch(receipt.branch_id);
+      const lines=(await c.query(`SELECT l.item_id,i.sku,i.name,l.qty,l.unit_cost,l.line_total,l.batch_no,l.expires_at::text AS expires_at,l.serial_nos,l.warranty_until::text AS warranty_until
+        FROM purchase_receipt_lines l JOIN items i ON i.tenant_id=l.tenant_id AND i.id=l.item_id WHERE l.receipt_id=$1 ORDER BY l.id`,[id])).rows;
+      return {...receipt,lines};
+    });
+    return {body:out};
+  });
+  /** Batches still in stock that expire within N days (default 3): what the butcher must sell or transform first. */
+  add('GET','/stock/expiring','session',async (rc)=>{
+    const a=await authorize(rc,'stock.view'),branchId=uuid(rc.query.get('branchId'),'branchId');
+    a.assertBranch(branchId);
+    const days=Number(rc.query.get('days')??3);
+    if(!Number.isInteger(days)||days<0||days>365)throw bad('days must be an integer from 0 to 365');
+    const batches=(await withTenant(runtime,a.ctx,(c)=>c.query(`SELECT i.id AS item_id,i.sku,i.name,i.base_uom,b.batch_no,b.expires_at,(b.expires_at AT TIME ZONE '${SHOP_TZ}')::date::text AS expires_on,
+        sum(sb.on_hand) AS on_hand,sum(sb.reserved) AS reserved,
+        ((b.expires_at AT TIME ZONE '${SHOP_TZ}')::date - (now() AT TIME ZONE '${SHOP_TZ}')::date) AS days_left
+      FROM stock_balances sb JOIN batches b ON b.tenant_id=sb.tenant_id AND b.id=sb.batch_id
+      JOIN items i ON i.tenant_id=sb.tenant_id AND i.id=sb.item_id
+      WHERE sb.branch_id=$1 AND sb.stock_status='sellable' AND sb.on_hand>0 AND b.expires_at IS NOT NULL
+        AND (b.expires_at AT TIME ZONE '${SHOP_TZ}')::date <= (now() AT TIME ZONE '${SHOP_TZ}')::date + $2::int
+      GROUP BY i.id,i.sku,i.name,i.base_uom,b.batch_no,b.expires_at ORDER BY b.expires_at,i.name LIMIT 200`,[branchId,days]))).rows;
+    return {body:{batches}};
+  });
   add('POST','/purchase-receipts','session',async (rc)=>{
     const a=await authorize(rc,'purchases.manage');
     if (!a.permissions.includes('stock.receive')) throw new HttpError(403,'FORBIDDEN','stock.receive required');
     const b=rc.body, branchId=uuid(b.branchId,'branchId'), supplierId=uuid(b.supplierId,'supplierId');
     a.assertBranch(branchId);
-    const lines=arr(b.lines,'lines',MAX_LINES).map((l,i)=>({
-      itemId:uuid(l.itemId,`lines[${i}].itemId`),
-      qty:num(l.qty,`lines[${i}].qty`,{positive:true}),
-      unitCost:num(l.unitCost,`lines[${i}].unitCost`,{min:0}),
-      batchNo:optStr(l.batchNo,'batchNo',60),
-    }));
+    const lines=arr(b.lines,'lines',MAX_LINES).map((l,i)=>{
+      const serials=l.serials==null?[]:arr(l.serials,`lines[${i}].serials`,500).map((x,j)=>str(x,`lines[${i}].serials[${j}]`,80));
+      if(new Set(serials).size!==serials.length)throw bad(`lines[${i}].serials contains the same serial number twice`);
+      const line={
+        itemId:uuid(l.itemId,`lines[${i}].itemId`),
+        qty:num(l.qty,`lines[${i}].qty`,{positive:true}),
+        unitCost:num(l.unitCost,`lines[${i}].unitCost`,{min:0}),
+        batchNo:l.batchNo===''?undefined:optStr(l.batchNo,`lines[${i}].batchNo`,60),
+        expiresAt:optDate(l.expiresAt,`lines[${i}].expiresAt`),
+        warrantyUntil:optDate(l.warrantyUntil,`lines[${i}].warrantyUntil`),
+        serials,
+      };
+      if(line.expiresAt&&!line.batchNo)throw bad(`lines[${i}]: an expiry date needs a batch number`);
+      if(serials.length&&serials.length!==line.qty)throw bad(`lines[${i}]: give exactly one serial number per unit`);
+      if(line.warrantyUntil&&!serials.length)throw bad(`lines[${i}]: a supplier warranty is recorded per serial number`);
+      return line;
+    });
     const p={branchId,supplierId,reference:b.reference==null?null:str(b.reference,'reference',80),lines};
     const result=await runCommand(runtime,a.ctx,{key:idemKey(rc),type:'purchase_receipt',payload:p},async(cc)=>{
       const sup=(await cc.client.query('SELECT active FROM suppliers WHERE id=$1',[supplierId])).rows[0];
       if (!sup) throw new HttpError(404,'NOT_FOUND','supplier not found');
       if (!sup.active) throw new HttpError(409,'INVALID_STATE','supplier archived');
+      // Time-dependent rule inside the command: a replay of a committed receipt keeps returning its stored result.
+      const today=shopToday();
+      // stock stops being sellable on its expiry date, so a lot expiring today could never be sold
+      lines.forEach((l,i)=>{ if(l.expiresAt&&l.expiresAt<=today)throw bad(`lines[${i}]: this batch is expired or expires today`); });
       const id=(await cc.client.query('INSERT INTO purchase_receipts (tenant_id,supplier_id,branch_id,reference,created_by) VALUES ($1,$2,$3,$4,$5) RETURNING id',
         [cc.tenantId,supplierId,branchId,p.reference,cc.userId??null])).rows[0].id;
       for(const l of lines){
-        await cc.client.query(`INSERT INTO purchase_receipt_lines (tenant_id,receipt_id,item_id,qty,unit_cost,line_total)
-          VALUES ($1,$2,$3,$4,$5,round($4::numeric*$5::numeric,2))`,[cc.tenantId,id,l.itemId,l.qty,l.unitCost]);
-        await receiveStock(cc,{...l,branchId,sourceType:'purchase_receipt',sourceId:id});
+        const item=(await cc.client.query('SELECT sku,serial_tracking FROM items WHERE id=$1',[l.itemId])).rows[0];
+        if(!item)throw new HttpError(404,'NOT_FOUND','item not found');
+        if(item.serial_tracking&&!l.serials.length)throw bad(`${item.sku}: enter the serial number of every unit received`);
+        if(!item.serial_tracking&&l.serials.length)throw bad(`${item.sku} is not tracked by serial number`);
+        await cc.client.query(`INSERT INTO purchase_receipt_lines (tenant_id,receipt_id,item_id,qty,unit_cost,line_total,batch_no,expires_at,serial_nos,warranty_until)
+          VALUES ($1,$2,$3,$4,$5,round($4::numeric*$5::numeric,2),$6,$7,$8,$9)`,
+          [cc.tenantId,id,l.itemId,l.qty,l.unitCost,l.batchNo??null,l.expiresAt,l.serials,l.warrantyUntil]);
+        await receiveStock(cc,{itemId:l.itemId,qty:l.qty,unitCost:l.unitCost,batchNo:l.batchNo,expiresAt:l.expiresAt,branchId,
+          serials:l.serials.length?l.serials.map((serialNo)=>({serialNo,...(l.warrantyUntil?{warrantyUntil:l.warrantyUntil}:{})})):undefined,
+          sourceType:'purchase_receipt',sourceId:id});
       }
       const total=(await cc.client.query(`UPDATE purchase_receipts SET total=(SELECT sum(line_total) FROM purchase_receipt_lines WHERE receipt_id=$1)
         WHERE id=$1 RETURNING total`,[id])).rows[0].total;

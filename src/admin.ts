@@ -288,8 +288,11 @@ export function registerAdminRoutes(k: Kit) {
   add('GET', '/audit', 'session', async (rc) => {
     const a = await authorize(rc, 'audit.view');
     const limit = Math.min(200, Math.max(1, Number(rc.query.get('limit') ?? 100) || 100));
+    const refId = rc.query.get('refId') ? uuid(rc.query.get('refId'), 'refId') : null;   // the history of one record (a vehicle, an item...)
+    // before/after hold business values only (names, prices, plates, owners): passwords and tokens are never written to the journal
     const rows = (await withTenant(runtime, a.ctx, (c) => c.query(
-      `SELECT l.at, l.action, l.ref_type, l.ref_id, u.name AS actor_name, l.meta FROM audit_log l LEFT JOIN users u ON u.id=l.actor_id ORDER BY l.at DESC LIMIT $1`, [limit]))).rows;
+      `SELECT l.at, l.action, l.ref_type, l.ref_id, u.name AS actor_name, l.before, l.after, l.meta FROM audit_log l LEFT JOIN users u ON u.id=l.actor_id
+        WHERE ($2::uuid IS NULL OR l.ref_id=$2) ORDER BY l.at DESC LIMIT $1`, [limit, refId]))).rows;
     return { body: { entries: rows } };
   });
   void num; void optUuid;

@@ -49,6 +49,14 @@ export const str = (v: unknown, name: string, max = 200): string => {
   return v.trim();
 };
 export const optStr = (v: unknown, name: string, max = 200) => (v == null ? undefined : str(v, name, max));
+/** Optional calendar date 'YYYY-MM-DD' that really exists (rejects 2026-02-30). Empty string = absent. */
+export const optDate = (v: unknown, name: string): string | null => {
+  if (v == null || v === '') return null;
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw bad(`${name} must be a date (YYYY-MM-DD)`);
+  const d = new Date(`${v}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v) throw bad(`${name} is not a valid date`);
+  return v;
+};
 export const num = (v: unknown, name: string, o: { min?: number; positive?: boolean } = {}): number => {
   if (typeof v !== 'number' || !Number.isFinite(v)) throw bad(`${name} must be a number`);
   if (o.positive && v <= 0) throw bad(`${name} must be > 0`);
