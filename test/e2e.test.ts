@@ -78,9 +78,9 @@ describe('web UI in a real browser', () => {
     // 1) platform administrator creates the shop through the UI
     await uiLogin(page, admin.email);
     await page.waitForSelector('text=Plateforme');
-    const slug = uniq('atayib').toLowerCase();
+    const slug = uniq('butcher').toLowerCase();
     await page.getByRole('button', { name: /Nouvel établissement/ }).click();
-    await page.fill('#sn', 'Atayib E2E'); await page.fill('#ss', slug);
+    await page.fill('#sn', 'Butcher E2E'); await page.fill('#ss', slug);
     await page.locator('#act-butcher').check(); await page.locator('#act-grill').check();
     const ownerEmail = `owner.${slug}@test.local`;
     await page.locator('#self-owner').uncheck();
@@ -155,7 +155,7 @@ describe('web UI in a real browser', () => {
     await page.waitForSelector('text=Plateforme');
     const slug = uniq('pilotui').toLowerCase();
     await page.getByRole('button', { name: /Nouvel établissement/ }).click();
-    await page.fill('#sn', 'Pilot Atayib');
+    await page.fill('#sn', 'Pilot Butcher');
     await page.fill('#ss', slug);
     await page.locator('#act-butcher').check();
     await page.locator('#act-grill').check();
@@ -203,7 +203,7 @@ describe('web UI in a real browser', () => {
   }, 90_000);
 
   it('E3 (desktop): equipment/security shop — serial-numbered product + installation service through the same POS', async () => {
-    const shop = await createShop(api, admin, 'pro', 'PP Securite E2E', ['security_systems']);
+    const shop = await createShop(api, admin, 'pro', 'Security E2E', ['security_systems']);
     const items = (await api.call('GET', '/items', { token: shop.ownerToken })).json.items;
     const det = items.find((i: any) => i.sku === 'SEC-DETECT').id;
     await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: det, qty: 2, unitCost: 300, serials: [{ serialNo: 'D-100' }, { serialNo: 'D-101' }] } });

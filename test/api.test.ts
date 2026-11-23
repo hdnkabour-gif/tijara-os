@@ -258,7 +258,7 @@ describe('end-to-end journeys for the three pilot business types', () => {
   const stock = async (s: Shop) => Object.fromEntries((await api.call('GET', `/stock?branchId=${s.branchId}`, { token: s.ownerToken })).json.stock.map((r: any) => [r.sku, Number(r.on_hand)]));
 
   it('J1: butcher + grill — receive 10kg, sell 1.47kg with grilling = 220.50, report, then cancel the sale', async () => {
-    const s = await createShop(api, admin, 'pro', 'Atayib');
+    const s = await createShop(api, admin, 'pro', 'Shop Butcher');
     const kafta = await mkItem(s, { sku: 'KAFTA', name: 'Kafta', kind: 'goods', trackQuantity: true, fulfillment: 'stock', baseUom: 'kg', price: 130 });
     const grill = await mkItem(s, { sku: 'GRILL', name: 'Grilling', kind: 'service', trackQuantity: false, fulfillment: 'none', price: 20 });
     expect((await receive(s, { itemId: kafta, qty: 10, unitCost: 100 })).status).toBe(201);
@@ -292,7 +292,7 @@ describe('end-to-end journeys for the three pilot business types', () => {
   });
 
   it('J3: equipment + installation — serial numbers sell once; the service touches no stock', async () => {
-    const s = await createShop(api, admin, 'pro', 'PP Securite');
+    const s = await createShop(api, admin, 'pro', 'Shop Security');
     const det = await mkItem(s, { sku: 'DET-01', name: 'Smoke detector', kind: 'goods', trackQuantity: true, serialTracking: true, fulfillment: 'stock', price: 450 });
     const inst = await mkItem(s, { sku: 'INST', name: 'Installation', kind: 'service', trackQuantity: false, fulfillment: 'none', price: 200 });
     expect((await receive(s, { itemId: det, qty: 2, unitCost: 300, serials: [{ serialNo: 'D1', warrantyUntil: '2028-01-01' }] })).status).toBe(400);
