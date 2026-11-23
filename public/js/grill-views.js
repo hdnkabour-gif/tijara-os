@@ -120,7 +120,7 @@ export async function suppliersView(S){
     const receipts=branchId?(await api('GET',`/purchase-receipts?branchId=${branchId}`)).receipts:[];
     root.replaceChildren(head(w('suppliers'),h('div',{class:'row'},S.me.permissions.includes('purchases.manage')&&btn('+ '+w('addSupplier'),createSup),S.me.permissions.includes('purchases.manage')&&btn('+ '+w('receive'),receive,'primary'))),
       branchSelector(S,branchId,(v)=>{branchId=v;render().catch(danger);}),
-      card(h('h2',null,w('suppliers')),h('div',{class:'chips'},suppliers.map(s=>h('span',{class:'chip'},s.name+(s.active?'':` (${w('archived')})`)))),
+      card(h('h2',null,w('suppliers')),h('div',{class:'chips'},suppliers.map(s=>h('span',{class:'chip'},s.name+(s.active?'':` (${w('archived')})`))))),
       card(h('h2',null,w('newSupply')),receipts.length?receipts.map(r=>h('p',null,`${r.supplier} · ${r.reference||''} · ${money(r.total)}`)):h('p',{class:'muted'},w('empty'))));
   };
   await render();return root;
