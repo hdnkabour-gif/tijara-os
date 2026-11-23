@@ -107,7 +107,7 @@ export function registerWorkshopRoutes(k:Kit){
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
         [cc.tenantId,branchId,vehicleId,vehicle.customer_id,p.note,mileage,warrantyDays,p.nextServiceDate,p.nextServiceKm,cc.userId??null])).rows[0].id;
       for(const l of lines){
-        const item=(await cc.client.query('SELECT id,price,active,serial_tracking FROM items WHERE id=$1',[l.itemId])).rows[0];
+        const item=(await cc.client.query('SELECT id,sku,name,price,active,serial_tracking FROM items WHERE id=$1',[l.itemId])).rows[0];
         if(!item||!item.active)throw new HttpError(400,'VALIDATION','item is missing or archived');
         if(item.serial_tracking)throw bad('serial tracked parts require a dedicated serial selection step');
         await cc.client.query(`INSERT INTO workshop_order_lines (tenant_id,work_order_id,item_id,qty,unit_price,line_total)
