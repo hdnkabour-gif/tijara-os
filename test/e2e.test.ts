@@ -44,6 +44,31 @@ const noLeaks = async (page: P) => expect(await page.evaluate(() => document.bod
 const hasMoney = (s: string, v: string) => new RegExp(v.replace('.', '[.,]')).test(s.replace(/\s/g, ''));
 
 describe('web UI in a real browser', () => {
+  it('E0b: empty platform shows actionable onboarding and responsive AR/FR navigation without fake metrics', async () => {
+    const { ctx, page, problems } = await newPage();
+    await uiLogin(page, admin.email);
+    await page.waitForSelector('.platform-empty');
+    await expect(page.getByRole('heading', { name: /premier établissement/i })).toBeVisible();
+    await expect(page.locator('.overview-strip .v').first()).toHaveText('0');
+    await expect(page.getByRole('button', { name: /créer le premier établissement/i })).toBeVisible();
+    await page.getByRole('button', { name: /créer le premier établissement/i }).click();
+    await page.waitForSelector('#sn');
+    await expect(page.locator('#ss')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await ctx.close();
+
+    const mobile = await newPage({ mobile: true, locale: 'ar-MA' });
+    await uiLogin(mobile.page, admin.email);
+    await mobile.page.waitForSelector('.platform-empty');
+    await mobile.page.getByRole('button', { name: 'Langue' }).click();
+    await expect(mobile.page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await expect(mobile.page.locator('.workspace .nav a')).toHaveCount(1);
+    const fits = await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+    expect(fits).toBe(true);
+    expect([...problems, ...mobile.problems]).toEqual([]);
+    await mobile.ctx.close();
+  });
+
   it('E1 (desktop, FR): platform admin creates a shop by activity; owner runs a full weighed sale with grilling; stock, dashboard and cancellation reflect it', async () => {
     const { ctx, page, problems } = await newPage();
     // 1) platform administrator creates the shop through the UI
