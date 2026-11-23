@@ -39,6 +39,11 @@ describe('Platform subscriptions, suspension, and limits',()=>{
     const forbidden=await api.call('GET','/workshop/vehicles',token(A.ownerToken));
     expect(forbidden.status).toBe(403);
     expect(forbidden.json.error.code).toBe('FEATURE_NOT_IN_PLAN');
+    expect((await control(A.tenantId,{features:{workshop:true}})).status).toBe(200);
+    expect((await api.call('GET','/workshop/vehicles',token(A.ownerToken))).status).toBe(200);
+    expect((await control(A.tenantId,{features:{workshop:false}})).status).toBe(200);
+    expect((await api.call('GET','/workshop/vehicles',token(A.ownerToken))).status).toBe(403);
+    expect((await control(A.tenantId,{features:{}})).status).toBe(200);
     expect((await control(A.tenantId,{plan:'complete'})).status).toBe(200);
     expect((await api.call('GET','/workshop/vehicles',token(A.ownerToken))).status).toBe(200);
   });
