@@ -44,7 +44,8 @@ export function createApp(d: AppDeps): http.RequestListener {
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first (POST /auth/switch-tenant)');
     const ctx = { tenantId: s.activeTenantId, userId: s.userId };
     const row = (await withTenant(d.runtime, ctx, (c) => c.query(
-      `SELECT m.branch_ids, r.name AS role_name, t.status AS shop_status, p.features AS plan_features,
+      `SELECT m.branch_ids, r.name AS role_name, t.status AS shop_status, t.plan_id AS shop_plan,
+              t.trial_expires_at AS trial_expires_at, p.features AS plan_features,
               COALESCE(q.feature_overrides,'{}'::jsonb) AS feature_overrides,
               COALESCE((SELECT array_agg(rp.permission) FROM role_permissions rp WHERE rp.tenant_id = m.tenant_id AND rp.role_id = m.role_id), '{}') AS perms
          FROM memberships m JOIN roles r ON r.tenant_id = m.tenant_id AND r.id = m.role_id
@@ -53,6 +54,8 @@ export function createApp(d: AppDeps): http.RequestListener {
         WHERE m.tenant_id = $1 AND m.user_id = $2 AND m.active`, [ctx.tenantId, ctx.userId]))).rows[0];
     if (!row) throw new HttpError(403,'FORBIDDEN','no active membership');
     if (row.shop_status !== 'active') throw new HttpError(423,'SHOP_SUSPENDED','shop access has been temporarily suspended; all data is retained');
+    if (row.shop_plan === 'trial' && row.trial_expires_at && new Date(row.trial_expires_at) <= new Date())
+      throw new HttpError(423,'TRIAL_EXPIRED','trial expired; all shop records are retained');
     const feature = perm.startsWith('kitchen.') ? 'kitchen'
       : perm.startsWith('workshop.') ? 'workshop'
       : perm.startsWith('purchases.') ? 'purchases'
@@ -118,10 +121,10 @@ export function createApp(d: AppDeps): http.RequestListener {
     let permissions: string[] = [];
     if (s.activeTenantId) {
       const result = await withTenant(d.runtime, { tenantId:s.activeTenantId,userId:s.userId }, async(c) => {
-        const ps = (await c.query(`SELECT t.status,p.features,COALESCE(q.feature_overrides,'{}'::jsonb) AS overrides
+        const ps = (await c.query(`SELECT t.status,t.plan_id,t.trial_expires_at,p.features,COALESCE(q.feature_overrides,'{}'::jsonb) AS overrides
           FROM tenants t JOIN plans p ON p.id=t.plan_id LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=$1`,
           [s.activeTenantId])).rows[0];
-        if (!ps || ps.status!=='active') return [];
+        if (!ps || ps.status!=='active' || (ps.plan_id==='trial' && ps.trial_expires_at && new Date(ps.trial_expires_at)<=new Date())) return [];
         const list = (await c.query(`SELECT rp.permission FROM memberships m JOIN role_permissions rp
           ON rp.tenant_id=m.tenant_id AND rp.role_id=m.role_id
           WHERE m.tenant_id=$1 AND m.user_id=$2 AND m.active ORDER BY 1`,[s.activeTenantId,s.userId])).rows;
@@ -144,10 +147,10 @@ export function createApp(d: AppDeps): http.RequestListener {
     const s = rc.session!;
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first');
     const row = (await withTenant(d.runtime, { tenantId: s.activeTenantId, userId: s.userId }, (c) => c.query(
-      'SELECT id, name, slug, plan_id, status, status_reason, settings FROM tenants WHERE id = $1', [s.activeTenantId]))).rows[0];
+      'SELECT id, name, slug, plan_id, status, status_reason, trial_expires_at, settings FROM tenants WHERE id = $1', [s.activeTenantId]))).rows[0];
     if (!row) throw new HttpError(403, 'FORBIDDEN', 'not a member of this tenant');
-    return { body: { id: row.id, name: row.name, slug: row.slug, plan: row.plan_id, status:row.status,
-      statusReason: row.status_reason, activities: row.settings?.activities ?? [], company: row.settings?.company ?? {} } };
+    return { body: { id: row.id, name: row.name, slug: row.slug, plan: row.plan_id, status:row.plan_id==='trial' && row.trial_expires_at && new Date(row.trial_expires_at)<=new Date()?'trial_expired':row.status,
+      statusReason: row.status_reason,trialExpiresAt:row.trial_expires_at, activities: row.settings?.activities ?? [], company: row.settings?.company ?? {} } };
   });
 
   // ───────────── platform (super admin) ─────────────
