@@ -18,10 +18,10 @@ export async function platformView() {
       h('button', { class: 'btn primary', type: 'button', onclick: openNewShop }, `+ ${t('newShop')}`)),
     h('div', { class: 'grid overview-strip' },
       h('div', { class: 'tile' },
-        h('span', { class: 'tile l' }, t('shopsCount')),
+        h('span', { class: 'l' }, t('shopsCount')),
         h('div', { class: 'v' }, String(tenants.length))),
       h('div', { class: 'tile' },
-        h('span', { class: 'tile l' }, t('platformScope')),
+        h('span', { class: 'l' }, t('platformScope')),
         h('div', { class: 'v overview-caption' }, t('platformScopeValue')))),
     tenants.length === 0
       ? h('section', { class: 'platform-empty card' },
