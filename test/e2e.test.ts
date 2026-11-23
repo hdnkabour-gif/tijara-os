@@ -100,6 +100,7 @@ describe('web UI in a real browser', () => {
     await mobile.page.waitForSelector('#tile-sales');
     await mobile.page.locator('nav.nav').getByRole('link',{name:'المطبخ والمشوي'}).click();
     expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
+    await mobile.page.getByText('طلبات التحضير').waitFor();
     expect(await mobile.page.getByText('طلبات التحضير').isVisible()).toBe(true);
     expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect(mobile.problems).toEqual([]);
@@ -140,7 +141,7 @@ describe('web UI in a real browser', () => {
     await page.waitForSelector('tr:has-text("BUT-BOEUF") >> text=/10/');
 
     // 4) POS: weighed meat + grilling service
-    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse', exact: true }).click();
     await page.click('button.prod[data-sku=BUT-BOEUF]');
     await page.fill('#w', '1.47'); await page.getByRole('button', { name: 'Valider' }).click();
     await page.click('button.prod[data-sku=GRL-CUISSON]');
@@ -242,7 +243,7 @@ describe('web UI in a real browser', () => {
     await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: det, qty: 2, unitCost: 300, serials: [{ serialNo: 'D-100' }, { serialNo: 'D-101' }] } });
     const { ctx, page, problems } = await newPage();
     await uiLogin(page, shop.ownerEmail);
-    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse', exact: true }).click();
     await page.click('button.prod[data-sku=SEC-DETECT]');
     await page.fill('#sn', 'D-100'); await page.getByRole('button', { name: 'Valider' }).click();
     await page.click('button.prod[data-sku=SEC-INSTALL]');
@@ -271,7 +272,7 @@ describe('web UI in a real browser', () => {
     await page.waitForSelector('td:has-text("EVIL-1")');
     expect(await page.evaluate(() => (window as any).__xss)).toBeUndefined();
     expect(await text(page, 'tr:has-text("EVIL-1")')).toContain('<img src=x');             // shown literally
-    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse', exact: true }).click();
     await page.waitForSelector('button.prod[data-sku=EVIL-1]');
     expect(await page.evaluate(() => (window as any).__xss)).toBeUndefined();
     // the browser session of A cannot read B through the API either (tenant comes from the session only)
@@ -307,7 +308,7 @@ describe('web UI in a real browser', () => {
     for (const [id, qty] of [[sugar, 20], [oil, 20]] as const) await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: id, qty, unitCost: 5 } });
     const { ctx, page, problems } = await newPage();
     await uiLogin(page, shop.ownerEmail);
-    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse', exact: true }).click();
     // 1.005 kg x 7 = 7.035 -> PostgreSQL numeric rounds to 7.04 (binary floats would give 7.03)
     await page.click('button.prod[data-sku=EPI-SUCRE]');
     await page.fill('#w', '1.005'); await page.getByRole('button', { name: 'Valider' }).click();
@@ -343,7 +344,7 @@ describe('web UI in a real browser', () => {
     const { ctx, page, problems } = await newPage();
     await page.route('**/sales/quick', async (route: any) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });   // slow network
     await uiLogin(page, shop.ownerEmail);
-    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse', exact: true }).click();
     await page.click('button.prod[data-sku=EPI-HUILE]');
     await page.click('#pay-cash');
     await page.waitForSelector('[aria-busy=true]');
@@ -367,7 +368,7 @@ describe('web UI in a real browser', () => {
     await api.call('POST', '/stock/receive', { token: shop.ownerToken, headers: { 'idempotency-key': key() }, body: { branchId: shop.branchId, itemId: free, qty: 5, unitCost: 1 } });
     const { ctx, page, problems } = await newPage();
     await uiLogin(page, shop.ownerEmail);
-    await page.locator('nav.nav').getByRole('link', { name: 'Caisse' }).click();
+    await page.locator('nav.nav').getByRole('link', { name: 'Caisse', exact: true }).click();
     await page.click('button.prod[data-sku=FREE-1]');
     expect(hasMoney(await text(page, '#cart-total'), '0.00')).toBe(true);
     await page.click('#pay-cash');
