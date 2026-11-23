@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Api, createShop, key, platformAdmin, staff, startApp } from './api-helpers.js';
 
 let api:Api, admin:{token:string};
@@ -20,7 +20,7 @@ describe('Phase C vehicle and workshop lifecycle',()=>{
       body:{plate:'12-a-34567',make:'Dacia',model:'Logan'}})).status).toBe(409);
     expect((await api.call('PATCH',`/workshop/vehicles/${v.json.id}`,{token:A.ownerToken,body:{odometerKm:89999}})).status).toBe(409);
     const payload={branchId:A.branchId,vehicleId:v.json.id,mileageAtVisit:90000,warrantyDays:90,
-      nextServiceDate:'2025-01-01',nextServiceKm:100000,
+      nextServiceDate:new Date(Date.now()+180*86400000).toISOString().slice(0,10),nextServiceKm:100000,
       note:'Oil change',lines:[{itemId:part,qty:1},{itemId:service,qty:1}]};
     const idem=key();
     const q=await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':idem},body:payload});
@@ -49,6 +49,11 @@ describe('Phase C vehicle and workshop lifecycle',()=>{
     expect(Number(stockAfter.find((x:any)=>x.sku==='MEC-FILTRE').on_hand)).toBe(1);
     expect(Number(stockAfter.find((x:any)=>x.sku==='MEC-FILTRE').reserved)).toBe(0);
     expect((await api.call('GET','/invoices',user(A.ownerToken))).json.invoices).toHaveLength(1);
+    // not due yet right after delivery (next service is in the future, 10 000 km away)
+    const notYet=(await api.call('GET',`/workshop/reminders?branchId=${A.branchId}`,user(A.ownerToken))).json.reminders;
+    expect(notYet.some((x:any)=>x.id===orderId)).toBe(false);
+    // the car comes back with 100 000 km on the clock: now it is due
+    expect((await api.call('PATCH',`/workshop/vehicles/${v.json.id}`,{token:A.ownerToken,body:{odometerKm:100000}})).status).toBe(200);
     const due=(await api.call('GET',`/workshop/reminders?branchId=${A.branchId}`,user(A.ownerToken))).json.reminders;
     expect(due.some((x:any)=>x.id===orderId)).toBe(true);
   });
@@ -78,5 +83,37 @@ describe('Phase C vehicle and workshop lifecycle',()=>{
     const cashier=await staff(api,A,'cashier');
     expect((await api.call('GET','/workshop/vehicles',user(cashier.token))).status).toBe(403);
     expect((await api.call('POST','/workshop/vehicles',{token:cashier.token,body:{plate:'AB-123',make:'Car',model:'One'}})).status).toBe(403);
+  });
+
+  it('WC4: a next service that is already due (past date, or km not above the current mileage) is refused',async()=>{
+    const A=await createShop(api,admin,'pro','Reminder Rules',['mechanic']);
+    const service=(await api.call('GET','/items',user(A.ownerToken))).json.items.find((x:any)=>x.sku==='MEC-VIDANGE').id;
+    const v=(await api.call('POST','/workshop/vehicles',{token:A.ownerToken,body:{plate:'55-c-555',make:'Fiat',model:'Punto',odometerKm:60000}})).json.id;
+    const base={branchId:A.branchId,vehicleId:v,mileageAtVisit:60000,lines:[{itemId:service,qty:1}]};
+    const post=(extra:object)=>api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':key()},body:{...base,...extra}});
+    expect((await post({nextServiceKm:0})).status).toBe(400);
+    expect((await post({nextServiceKm:60000})).status).toBe(400);
+    expect((await post({nextServiceDate:'2020-01-01'})).status).toBe(400);
+    expect((await post({nextServiceDate:new Date().toISOString().slice(0,10)})).status).toBe(400);
+    expect((await post({nextServiceKm:70000,nextServiceDate:new Date(Date.now()+90*86400000).toISOString().slice(0,10)})).status).toBe(201);
+    expect((await post({})).status).toBe(201);                                   // no next service at all is fine
+  });
+  it('WC5: replaying a committed quote after its next-service date has passed returns the stored result, not 400',async()=>{
+    const A=await createShop(api,admin,'pro','Replay Garage',['mechanic']);
+    const service=(await api.call('GET','/items',user(A.ownerToken))).json.items.find((x:any)=>x.sku==='MEC-VIDANGE').id;
+    const v=(await api.call('POST','/workshop/vehicles',{token:A.ownerToken,body:{plate:'66-d-666',make:'Renault',model:'Clio',odometerKm:40000}})).json.id;
+    const body={branchId:A.branchId,vehicleId:v,mileageAtVisit:40000,lines:[{itemId:service,qty:1}],
+      nextServiceDate:new Date(Date.now()+86400000).toISOString().slice(0,10)};
+    const idem=key();
+    const first=await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':idem},body});
+    expect(first.status).toBe(201);
+    vi.useFakeTimers({toFake:['Date'],now:Date.now()+3*86400000});   // the response was lost; the client retries days later
+    try{
+      const again=await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':idem},body});
+      expect(again.status).toBe(201);expect(again.json.id).toBe(first.json.id);
+      // a NEW quote with that (now past) date is still refused
+      expect((await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':key()},body})).status).toBe(400);
+    }finally{vi.useRealTimers();}
+    expect((await api.call('GET',`/workshop/orders?branchId=${A.branchId}`,user(A.ownerToken))).json.orders.length).toBe(1);
   });
 });

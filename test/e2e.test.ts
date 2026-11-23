@@ -75,15 +75,21 @@ describe('web UI in a real browser', () => {
 
   it('E11: kitchen dashboard confirms a real order flow and fits a Moroccan mobile screen in Arabic', async () => {
     const shop=await createShop(api,admin,'pro','Grill Pilot',['butcher','grill']);
-    const grillItem=(await api.call('GET','/items',{token:shop.ownerToken})).json.items.find((x:any)=>x.sku==='GRL-CUISSON');
+    const grillItems=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
+    const grillItem=grillItems.find((x:any)=>x.sku==='GRL-CUISSON'), kefta=grillItems.find((x:any)=>x.sku==='BUT-KEFTA');
+    await api.call('POST','/stock/receive',{token:shop.ownerToken,headers:{'idempotency-key':key()},body:{branchId:shop.branchId,itemId:kefta.id,qty:5,unitCost:70}});
     const {ctx,page,problems}=await newPage();
     await uiLogin(page,shop.ownerEmail);
     await page.waitForSelector('#tile-sales');
     await page.locator('nav.nav').getByRole('link',{name:'Cuisine & grill'}).click();
     await page.getByRole('button',{name:/Envoyer à la cuisine/}).click();
     await page.fill('#grill-label','Table 7');
-    await page.locator('#grill-item').selectOption(grillItem.id);
-    await page.fill('#grill-qty','1');
+    // one table, several items: grilling service + 1.2 kg of kefta
+    await page.locator('#grill-item-0').selectOption(grillItem.id);
+    await page.fill('#grill-qty-0','1');
+    await page.getByRole('button',{name:/Ajouter un article/}).click();
+    await page.locator('#grill-item-1').selectOption(kefta.id);
+    await page.fill('#grill-qty-1','1.2');
     await page.locator('.modal button[type=submit]').click();
     await page.getByText('Table 7').waitFor();
     await page.getByRole('button',{name:'Démarrer la préparation'}).click();
@@ -91,7 +97,11 @@ describe('web UI in a real browser', () => {
     await page.getByRole('button',{name:'Encaisser'}).click();
     await page.locator('.modal button[type=submit]').click();
     await page.getByText('Aucune opération à afficher').waitFor();
-    expect((await api.call('GET','/invoices',{token:shop.ownerToken})).json.invoices).toHaveLength(1);
+    const grillInvoices=(await api.call('GET','/invoices',{token:shop.ownerToken})).json.invoices;
+    expect(grillInvoices).toHaveLength(1);
+    expect(Number(grillInvoices[0].total)).toBe(152);                               // 1 x 20 + 1.2 kg x 110
+    const keftaStock=(await api.call('GET',`/stock?branchId=${shop.branchId}`,{token:shop.ownerToken})).json.stock.find((r:any)=>r.sku==='BUT-KEFTA');
+    expect(Number(keftaStock.on_hand)).toBeCloseTo(3.8,4);                          // the meat left stock exactly once
     expect(problems).toEqual([]);
     await ctx.close();
 
@@ -109,7 +119,9 @@ describe('web UI in a real browser', () => {
 
   it('E12: workshop browser creates vehicle and delivers service invoice; mobile Arabic routes fit', async () => {
     const shop=await createShop(api,admin,'pro','Workshop E2E',['mechanic']);
-    const service=(await api.call('GET','/items',{token:shop.ownerToken})).json.items.find((i:any)=>i.sku==='MEC-VIDANGE');
+    const allItems=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
+    const service=allItems.find((i:any)=>i.sku==='MEC-VIDANGE'), labour=allItems.find((i:any)=>i.sku==='MEC-MO');
+    await api.call('POST','/workshop/vehicles',{token:shop.ownerToken,body:{plate:'77-B-900',make:'Renault',model:'Clio',odometerKm:77000}});
     const {ctx,page,problems}=await newPage();
     await uiLogin(page,shop.ownerEmail);
     await page.waitForSelector('#tile-sales');
@@ -123,11 +135,19 @@ describe('web UI in a real browser', () => {
     await page.getByText(/18-A-501/).waitFor();
     await page.locator('nav.nav').getByRole('link',{name:'Atelier & réparations',exact:true}).click();
     await page.getByRole('button',{name:/Nouveau devis/}).click();
-    await page.selectOption('#wo-item',service.id);
-    await page.fill('#wo-qty','1');
-    await page.fill('#wo-km','40000');
+    // the mileage field follows the vehicle that is selected (not the first one of the list)
+    await page.selectOption('#wo-vehicle',{label:'77-B-900 · Clio'});
+    expect(await page.inputValue('#wo-km')).toBe('77000');
+    await page.selectOption('#wo-vehicle',{label:'18-A-501 · Logan'});
+    expect(await page.inputValue('#wo-km')).toBe('40000');
+    // several lines: the service plus 1.5 hours of labour
+    await page.selectOption('#wo-item-0',service.id);
+    await page.fill('#wo-qty-0','1');
+    await page.getByRole('button',{name:/Ajouter une ligne/}).click();
+    await page.selectOption('#wo-item-1',labour.id);
+    await page.fill('#wo-qty-1','1.5');
     await page.fill('#wo-warranty','60');
-    await page.fill('#wo-next-date','2025-01-01');
+    await page.fill('#wo-next-date',new Date(Date.now()+180*86400000).toISOString().slice(0,10));
     await page.locator('.modal button[type=submit]').click();
     await page.getByText('18-A-501').waitFor();
     await page.getByRole('button',{name:'Approuver le devis'}).click();
@@ -136,9 +156,11 @@ describe('web UI in a real browser', () => {
     await page.getByRole('button',{name:'Livrer et facturer'}).click();
     await page.locator('.modal button[type=submit]').click();
     await page.getByText('Livré').waitFor();
+    // nothing is "due" right after delivery when the next service is in the future
+    expect((await api.call('GET',`/workshop/reminders?branchId=${shop.branchId}`,{token:shop.ownerToken})).json.reminders).toHaveLength(0);
     const invoices=(await api.call('GET','/invoices',{token:shop.ownerToken})).json.invoices;
     expect(invoices).toHaveLength(1);
-    expect(Number(invoices[0].total)).toBe(150);
+    expect(Number(invoices[0].total)).toBe(330);                                 // 150 (service) + 1.5 h x 120
     expect(problems).toEqual([]);
     await ctx.close();
 
@@ -556,4 +578,32 @@ describe('web UI in a real browser', () => {
     expect(problems).toEqual([]); expect(staffPage.problems).toEqual([]);
     await staffPage.ctx.close(); await ctx.close();
   }, 120_000);
+
+  it('E15: a delivery receipt whose response is lost and which is submitted again is recorded ONCE (same command)', async () => {
+    const shop=await createShop(api,admin,'pro','Lost Response',['butcher']);
+    const beef=(await api.call('GET','/items',{token:shop.ownerToken})).json.items.find((i:any)=>i.sku==='BUT-BOEUF');
+    await api.call('POST','/suppliers',{token:shop.ownerToken,body:{name:'Abattoir Test'}});
+    const {ctx,page,problems}=await newPage();
+    let first=true;
+    await page.route('**/purchase-receipts', async (route:any)=>{
+      if(route.request().method()==='POST'&&first){ first=false; await route.fetch(); await route.abort('failed'); return; }   // server commits, client never sees the answer
+      await route.continue();
+    });
+    await uiLogin(page,shop.ownerEmail);
+    await page.waitForSelector('#tile-sales');
+    await page.locator('nav.nav').getByRole('link',{name:'Fournisseurs & achats',exact:true}).click();
+    await page.getByRole('button',{name:/Réceptionner une livraison/}).click();
+    await page.selectOption('#purchase-item',beef.id);
+    await page.fill('#purchase-qty','12.5'); await page.fill('#purchase-cost','80');
+    await page.locator('.modal button[type=submit]').click();
+    await page.waitForSelector('.modal .error');                                  // the cashier sees a network error...
+    await page.locator('.modal button[type=submit]').click();                    // ...and simply presses save again
+    await page.waitForFunction(()=>!document.querySelector('.modal'));
+    const receipts=(await api.call('GET',`/purchase-receipts?branchId=${shop.branchId}`,{token:shop.ownerToken})).json.receipts;
+    expect(receipts).toHaveLength(1);                                             // one delivery, not two
+    const st=(await api.call('GET',`/stock?branchId=${shop.branchId}`,{token:shop.ownerToken})).json.stock.find((r:any)=>r.sku==='BUT-BOEUF');
+    expect(Number(st.on_hand)).toBe(12.5);
+    expect(problems.filter((p:string)=>!/Failed to fetch|net::ERR_FAILED/.test(p))).toEqual([]);
+    await ctx.close();
+  }, 60_000);
 });
