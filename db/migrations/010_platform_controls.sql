@@ -67,8 +67,11 @@ BEGIN
     FROM tenants t JOIN plans p ON p.id=t.plan_id LEFT JOIN tenant_quotas q ON q.tenant_id=t.id
    WHERE t.id=NEW.tenant_id;
   IF v_max IS NULL THEN RAISE EXCEPTION 'plan quota unavailable' USING ERRCODE='P0001'; END IF;
-  -- Read under the target shop context. Also works with FORCE RLS for tenant-scoped tables.
-  PERFORM set_config('app.tenant_id',NEW.tenant_id::text,true);
+  -- SECURITY CRITICAL: never change app.tenant_id inside a row trigger.
+  -- A cross-tenant INSERT must fail with the caller's original RLS context intact.
+  IF app_tenant() IS DISTINCT FROM NEW.tenant_id THEN
+    RAISE EXCEPTION 'tenant context mismatch' USING ERRCODE='42501';
+  END IF;
   IF v_col='max_users' THEN
     SELECT count(*) INTO v_count FROM memberships WHERE tenant_id=NEW.tenant_id AND active;
   ELSIF v_col='max_monthly_orders' THEN
@@ -81,6 +84,7 @@ BEGIN
       INTO v_count USING NEW.tenant_id;
   END IF;
   IF v_count >= v_max THEN
+    IF v_col='max_users' THEN RAISE EXCEPTION 'plan user limit reached (%)',v_max USING ERRCODE='P0001'; END IF;
     RAISE EXCEPTION 'plan quota % reached (%)',v_col,v_max USING ERRCODE='P0001';
   END IF;
   RETURN NEW;
