@@ -44,11 +44,23 @@ export function createApp(d: AppDeps): http.RequestListener {
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first (POST /auth/switch-tenant)');
     const ctx = { tenantId: s.activeTenantId, userId: s.userId };
     const row = (await withTenant(d.runtime, ctx, (c) => c.query(
-      `SELECT m.branch_ids, r.name AS role_name,
+      `SELECT m.branch_ids, r.name AS role_name, t.status AS shop_status, p.features AS plan_features,
               COALESCE((SELECT array_agg(rp.permission) FROM role_permissions rp WHERE rp.tenant_id = m.tenant_id AND rp.role_id = m.role_id), '{}') AS perms
          FROM memberships m JOIN roles r ON r.tenant_id = m.tenant_id AND r.id = m.role_id
+         JOIN tenants t ON t.id=m.tenant_id JOIN plans p ON p.id=t.plan_id
         WHERE m.tenant_id = $1 AND m.user_id = $2 AND m.active`, [ctx.tenantId, ctx.userId]))).rows[0];
-    if (!row || !row.perms.includes(perm)) throw new HttpError(403, 'FORBIDDEN', `missing permission ${perm}`);
+    if (!row) throw new HttpError(403,'FORBIDDEN','no active membership');
+    if (row.shop_status !== 'active') throw new HttpError(423,'SHOP_SUSPENDED','shop access has been temporarily suspended; all data is retained');
+    const feature = perm.startsWith('kitchen.') ? 'kitchen'
+      : perm.startsWith('workshop.') ? 'workshop'
+      : perm.startsWith('purchases.') ? 'purchases'
+      : perm.startsWith('cash.') ? 'cash'
+      : perm.startsWith('production.') ? 'production'
+      : perm.startsWith('bookings.') ? 'bookings'
+      : perm.startsWith('delivery.') ? 'delivery' : 'core';
+    if (!Array.isArray(row.plan_features) || !row.plan_features.includes(feature))
+      throw new HttpError(403,'FEATURE_NOT_IN_PLAN',`feature ${feature} unavailable for this plan`);
+    if (!row.perms.includes(perm)) throw new HttpError(403, 'FORBIDDEN', `missing permission ${perm}`);
     const branchIds: string[] = row.branch_ids;
     return {
       ctx: ctx as { tenantId: string; userId: string }, branchIds, permissions: row.perms as string[], roleName: row.role_name as string,
@@ -113,16 +125,47 @@ export function createApp(d: AppDeps): http.RequestListener {
     const s = rc.session!;
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first');
     const row = (await withTenant(d.runtime, { tenantId: s.activeTenantId, userId: s.userId }, (c) => c.query(
-      'SELECT id, name, slug, plan_id, settings FROM tenants WHERE id = $1', [s.activeTenantId]))).rows[0];
+      'SELECT id, name, slug, plan_id, status, status_reason, settings FROM tenants WHERE id = $1', [s.activeTenantId]))).rows[0];
     if (!row) throw new HttpError(403, 'FORBIDDEN', 'not a member of this tenant');
-    return { body: { id: row.id, name: row.name, slug: row.slug, plan: row.plan_id, activities: row.settings?.activities ?? [], company: row.settings?.company ?? {} } };
+    return { body: { id: row.id, name: row.name, slug: row.slug, plan: row.plan_id, status:row.status,
+      statusReason: row.status_reason, activities: row.settings?.activities ?? [], company: row.settings?.company ?? {} } };
   });
 
   // ───────────── platform (super admin) ─────────────
   add('GET', '/platform/tenants', 'session', async (rc) => {
     if (!rc.session!.isPlatformAdmin) throw new HttpError(403, 'FORBIDDEN', 'platform administrators only');
-    return { body: { tenants: (await d.platform.query('SELECT * FROM platform_list_tenants()')).rows } };
+    return { body: { tenants: (await d.platform.query('SELECT * FROM platform_list_tenant_controls()')).rows } };
   });
+  add('GET', '/platform/plans', 'session', async (rc) => {
+    if (!rc.session!.isPlatformAdmin) throw new HttpError(403,'FORBIDDEN','platform administrators only');
+    const plans = (await d.platform.query("SELECT id,name,max_users,max_items,max_branches,max_customers,max_monthly_orders,features FROM plans WHERE id <> 'tiny' ORDER BY CASE id WHEN 'trial' THEN 1 WHEN 'basic' THEN 2 WHEN 'pro' THEN 3 ELSE 4 END")).rows;
+    return { body: { plans } };
+  });
+  add('PATCH', '/platform/tenants/:id/controls', 'session', async (rc) => {
+    if (!rc.session!.isPlatformAdmin) throw new HttpError(403,'FORBIDDEN','platform administrators only');
+    const id = uuid(rc.params.id,'id'), b = rc.body;
+    const plan = b.plan === undefined ? null : oneOf(b.plan,'plan',['trial','basic','pro','complete'] as const);
+    const status = b.status === undefined ? null : oneOf(b.status,'status',['active','suspended'] as const);
+    const reason = b.reason === undefined ? null : str(b.reason,'reason',300);
+    const limits: Record<string,number|null> = {};
+    if (b.limits !== undefined) {
+      if (!b.limits || typeof b.limits !== 'object' || Array.isArray(b.limits)) throw bad('limits must be an object');
+      const keys = ['max_users','max_items','max_branches','max_customers','max_monthly_orders'];
+      for (const [key,value] of Object.entries(b.limits)) {
+        if (!keys.includes(key)) throw bad(`unsupported limit ${key}`);
+        if (value !== null && (!Number.isSafeInteger(value) || (value as number)<1 || (value as number)>10000000))
+          throw bad(`invalid ${key}`);
+        limits[key] = value as number|null;
+      }
+    }
+    if (status==='suspended' && !reason) throw bad('suspension reason required');
+    if (plan===null && status===null && Object.keys(limits).length===0) throw bad('no changes requested');
+    const changed=(await d.platform.query('SELECT platform_set_tenant_controls($1,$2,$3,$4,$5,$6::jsonb) AS ok',
+      [rc.session!.userId,id,plan,status,reason,b.limits===undefined?null:JSON.stringify(limits)])).rows[0]?.ok;
+    if (!changed) throw new HttpError(404,'NOT_FOUND','shop not found');
+    return { body: { status:'ok' } };
+  });
+
   add('POST', '/platform/tenants', 'session', async (rc) => {
     if (!rc.session!.isPlatformAdmin) throw new HttpError(403, 'FORBIDDEN', 'platform administrators only');
     const o = rc.body;
@@ -135,7 +178,7 @@ export function createApp(d: AppDeps): http.RequestListener {
     const slug = str(o.slug, 'slug', 40).toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(slug)) throw bad('slug must be lowercase letters, digits, dashes');
     const t = await platformCreateShop(d.platform, d.runtime, rc.session!.userId, {
-      name: str(o.name, 'name'), slug, plan: oneOf(o.plan, 'plan', ['basic', 'pro']),
+      name: str(o.name, 'name'), slug, plan: oneOf(o.plan, 'plan', ['trial', 'basic', 'pro', 'complete']),
       activities: (o.activities == null ? [] : arr(o.activities, 'activities', 10)).map((a: unknown) => oneOf(a, 'activities[]', activityIds as readonly string[])),
       owner: selfOwner
         ? { existingUserId: rc.session!.userId }
