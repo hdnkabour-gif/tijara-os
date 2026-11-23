@@ -34,8 +34,8 @@ const btn=(label,callback,cls='')=>h('button',{class:'btn '+cls,type:'button',on
 const head=(title,action)=>h('div',{class:'row'},h('h1',{class:'grow'},title),action);
 const card=(...children)=>h('div',{class:'card'},...children);
 const danger=(err)=>{toast(friendly(err),true);};
-const branchDropdown=(S,cb)=>h('select',{id:'ops-branch',onchange:(e)=>cb(e.target.value)},
-  S.branches.map((b)=>h('option',{value:b.id},b.name)));
+const branchDropdown=(S,current,cb)=>h('select',{id:'ops-branch',onchange:(e)=>cb(e.target.value)},
+  S.branches.map((b)=>h('option',{value:b.id,selected:b.id===current},b.name)));
 const formModal=(title,inputs,onSubmit)=>{
   const err=h('div');
   const m=modal(title,h('form',{onsubmit:async(e)=>{e.preventDefault();try{await onSubmit();m.close();}catch(ex){err.replaceChildren(h('div',{class:'error',role:'alert'},friendly(ex)));}}},
@@ -46,7 +46,7 @@ const select=(id,list,mapper)=>h('select',{id},list.map(mapper));
 const activeProducts=(items,onlyKg=false)=>items.filter(i=>i.active && (!onlyKg || (i.track_quantity && i.base_uom==='kg')));
 const itemSelect=(items,id='ops-item')=>select(id,items,i=>h('option',{value:i.id},`${i.name} · ${money(i.price)}`));
 const numberInput=(id,value='1',step='0.001')=>h('input',{id,type:'number',min:'0',step,value,required:true});
-const branchSelector=(S,id,set)=>h('div',{class:'row'},h('label',{for:'ops-branch'},w('branch')),branchDropdown(S,set));
+const branchSelector=(S,id,set)=>h('div',{class:'row'},h('label',{for:'ops-branch'},w('branch')),branchDropdown(S,id,set));
 const stateName=(s)=>s==='confirmed'?w('waiting'):s==='in_preparation'?w('cooking'):w('ready');
 
 export async function grillView(S){
