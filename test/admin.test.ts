@@ -217,7 +217,8 @@ describe('shop identity, printable invoice, journal', () => {
     expect(t.name).toBe('Renamed Shop'); expect(t.company).toMatchObject({ legalName: 'SARL Demo', ice: '001234567000089', footer: 'Only footer updated' });
     const sugar = (await api.call('GET', '/items', j(A.ownerToken))).json.items.find((i: any) => i.sku === 'EPI-SUCRE').id;
     await receive(A, sugar, 10);
-    const sale = await api.call('POST', '/sales/quick', { ...j(cashier.token), headers: { 'idempotency-key': key() }, body: { branchId: A.branchId, lines: [{ itemId: sugar, qty: 1.5 }], payments: [{ method: 'cash', amount: 10.5 }] } });
+    const customerId = (await api.call('POST', '/customers', { ...j(A.ownerToken), body: { name: 'Original Customer', phone: '0500000001' } })).json.id;
+    const sale = await api.call('POST', '/sales/quick', { ...j(cashier.token), headers: { 'idempotency-key': key() }, body: { branchId: A.branchId, customerId, lines: [{ itemId: sugar, qty: 1.5 }], payments: [{ method: 'cash', amount: 10.5 }] } });
     expect(sale.status).toBe(201);
     const inv = (await api.call('GET', '/invoices', j(cashier.token))).json.invoices[0];
     const d = await api.call('GET', `/invoices/${inv.id}`, j(cashier.token));
@@ -225,7 +226,17 @@ describe('shop identity, printable invoice, journal', () => {
     expect(d.json.shop).toMatchObject({ name: 'Renamed Shop', company: { ice: '001234567000089' } });
     expect(d.json.lines).toHaveLength(1); expect(d.json.lines[0]).toMatchObject({ sku: 'EPI-SUCRE', qty: '1.5000', unit_price: '7.0000', line_total: '10.50' });
     expect(d.json.payments).toEqual([expect.objectContaining({ method: 'cash', amount: '10.50' })]);
-    expect(d.json.invoice).toMatchObject({ invoice_no: expect.stringMatching(/^A-/), total: '10.50', branch_name: 'Main' });
+    expect(d.json.invoice).toMatchObject({ invoice_no: expect.stringMatching(/^A-/), total: '10.50', branch_name: 'Main', customer_name: 'Original Customer' });
+    // Commercial identity is immutable after issuance even when seller, catalog, customer and branch are edited.
+    expect((await api.call('PATCH', `/items/${sugar}`, { ...j(A.ownerToken), body: { name: 'New Catalog Name', price: 123 } })).status).toBe(200);
+    expect((await api.call('PATCH', `/customers/${customerId}`, { ...j(A.ownerToken), body: { name: 'Updated Customer' } })).status).toBe(200);
+    expect((await api.call('PATCH', `/branches/${A.branchId}`, { ...j(A.ownerToken), body: { name: 'Renamed Location' } })).status).toBe(200);
+    expect((await api.call('PATCH', '/tenant', { ...j(A.ownerToken), body: { name: 'New Branding', company: { legalName: 'Updated Legal Name' } } })).status).toBe(200);
+    const originalAgain = await api.call('GET', `/invoices/${inv.id}`, j(cashier.token));
+    expect(originalAgain.status).toBe(200);
+    expect(originalAgain.json.lines[0]).toMatchObject({ name: 'Sucre 1kg', sku: 'EPI-SUCRE', unit_price: '7.0000' });
+    expect(originalAgain.json.invoice).toMatchObject({ branch_name: 'Main', customer_name: 'Original Customer', total: '10.50' });
+    expect(originalAgain.json.shop).toMatchObject({ name: 'Renamed Shop', company: { legalName: 'SARL Demo' } });
     expect((await api.call('GET', `/invoices/${inv.id}`, j(B.ownerToken))).status).toBe(404);        // another shop cannot read it
     expect((await api.call('GET', `/invoices/${key()}`, j(A.ownerToken))).status).toBe(404);
     expect((await api.call('GET', '/invoices/not-a-uuid', j(A.ownerToken))).status).toBe(400);
