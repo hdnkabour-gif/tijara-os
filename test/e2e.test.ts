@@ -46,6 +46,9 @@ const hasMoney = (s: string, v: string) => new RegExp(v.replace('.', '[.,]')).te
 describe('web UI in a real browser', () => {
   it('E0b: empty platform shows actionable onboarding and responsive AR/FR navigation without fake metrics', async () => {
     const { ctx, page, problems } = await newPage();
+    // The empty-state UI is a deterministic fixture: parallel suites create real tenants in the shared CI database.
+    await page.route('**/platform/tenants', (route: any) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tenants: [] }) }));
     await uiLogin(page, admin.email);
     await page.waitForSelector('.platform-empty');
     expect(await page.getByRole('heading', { name: /premier établissement/i }).isVisible()).toBe(true);
@@ -58,6 +61,8 @@ describe('web UI in a real browser', () => {
     await ctx.close();
 
     const mobile = await newPage({ mobile: true, locale: 'ar-MA' });
+    await mobile.page.route('**/platform/tenants', (route: any) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tenants: [] }) }));
     await uiLogin(mobile.page, admin.email);
     await mobile.page.waitForSelector('.platform-empty');
     expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
