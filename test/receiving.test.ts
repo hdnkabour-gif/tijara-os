@@ -5,7 +5,9 @@ let api:Api, admin:{token:string};
 beforeAll(async()=>{api=await startApp();admin=await platformAdmin(api);});
 afterAll(async()=>{await api.close();});
 const as=(token:string)=>({token});
-const day=(n:number)=>new Date(Date.now()+n*86400000).toISOString().slice(0,10);
+// calendar days in the shop's timezone (the server validates against the Casablanca day, not the UTC day)
+const casa=(d:Date,opts:Intl.DateTimeFormatOptions)=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Africa/Casablanca',...opts}).format(d);
+const day=(n:number)=>casa(new Date(Date.now()+n*86400000),{year:'numeric',month:'2-digit',day:'2-digit'});
 const sku=(items:any[],s:string)=>items.find((x:any)=>x.sku===s).id;
 
 async function supplierShop(activities:string[],name='Receiving'){
@@ -32,7 +34,9 @@ describe('PR-A supplier receiving: batch, expiry, serial numbers',()=>{
     // expiry watch: in the 3-day window, not in the "today" window
     const soon=(await api.call('GET',`/stock/expiring?branchId=${A.branchId}&days=3`,as(A.ownerToken))).json.batches;
     expect(soon).toHaveLength(1);
-    expect(soon[0]).toMatchObject({sku:'BUT-BOEUF',batch_no:'L-0001',days_left:2});
+    expect(soon[0]).toMatchObject({sku:'BUT-BOEUF',batch_no:'L-0001',days_left:2,expires_on:day(2)});
+    // the lot stops being sellable at LOCAL midnight of its expiry day (not UTC midnight = 01:00 in Casablanca)
+    expect(casa(new Date(soon[0].expires_at),{dateStyle:'short',timeStyle:'short'})).toBe(`${day(2)} 00:00`);
     expect(Number(soon[0].on_hand)).toBe(12.5);
     expect((await api.call('GET',`/stock/expiring?branchId=${A.branchId}&days=0`,as(A.ownerToken))).json.batches).toHaveLength(0);
     // same batch number again with ANOTHER expiry: refused, and nothing of that receipt is stored (atomic)
@@ -171,11 +175,13 @@ describe('PR-A vehicles: owner and plate changes, warranty end, reminders',()=>{
   });
 
   it('RV3: the warranty end is the local delivery date + warranty days, visible on the order and the vehicle history',async()=>{
-    const {A,vehicle,repair}=await garage('Garage warranty');
+    const {A,items,vehicle,repair}=await garage('Garage warranty');
     const v=await vehicle('77-G-7777',30000);
+    const quoteOnly=(await api.call('POST','/workshop/orders',{token:A.ownerToken,headers:{'idempotency-key':key()},
+      body:{branchId:A.branchId,vehicleId:v,mileageAtVisit:30000,lines:[{itemId:sku(items,'MEC-VIDANGE'),qty:1}]}})).json.id;
     const withWarranty=await repair(v,30000,{warrantyDays:90});
     const noWarranty=await repair(v,30500,{warrantyDays:0});
-    const local=new Date(Date.now()+3600000).toISOString().slice(0,10);   // Morocco = UTC+1
+    const local=day(0);   // the local (Casablanca) delivery day
     const expected=new Date(Date.parse(`${local}T00:00:00Z`)+90*86400000).toISOString().slice(0,10);
     const orders=(await api.call('GET',`/workshop/orders?branchId=${A.branchId}`,as(A.ownerToken))).json.orders;
     expect(String(orders.find((o:any)=>o.id===withWarranty).warranty_until).slice(0,10)).toBe(expected);
@@ -183,7 +189,12 @@ describe('PR-A vehicles: owner and plate changes, warranty end, reminders',()=>{
     const repairs=(await api.call('GET',`/workshop/vehicles/${v}`,as(A.ownerToken))).json.repairs;
     expect(repairs.find((r:any)=>r.id===withWarranty).in_warranty).toBe(true);
     expect(repairs.find((r:any)=>r.id===noWarranty).in_warranty).toBeNull();
-    expect(repairs).toHaveLength(2);
+    expect(repairs).toHaveLength(3);
+    // a visit that was never delivered is dated by its creation (the history must never show an invalid date)
+    const pending=repairs.find((r:any)=>r.id===quoteOnly);
+    expect(pending.delivered_at).toBeNull();
+    expect(Number.isNaN(Date.parse(pending.created_at))).toBe(false);
+    expect(pending.warranty_until).toBeNull();
   });
 
   it('RV4: only the latest visit of a car can be due, and the reminder goes to the CURRENT owner',async()=>{

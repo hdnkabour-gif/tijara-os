@@ -1,7 +1,7 @@
 import { audit } from './audit.js';
 import { runCommand } from './commands.js';
 import { withTenant } from './db.js';
-import { HttpError, arr, bad, num, optDate, optNum, optStr, optUuid, oneOf, str, uuid } from './http.js';
+import { HttpError, SHOP_TZ, arr, bad, num, optDate, shopToday, optNum, optStr, optUuid, oneOf, str, uuid } from './http.js';
 import { consumeDirect, receiveStock } from './inventory.js';
 import type { Kit, Authz } from './kit.js';
 import { confirmOrder, createOrder, markReady, payOrder, startPreparation } from './sales.js';
@@ -164,13 +164,13 @@ export function registerGrillRoutes(k: Kit) {
     a.assertBranch(branchId);
     const days=Number(rc.query.get('days')??3);
     if(!Number.isInteger(days)||days<0||days>365)throw bad('days must be an integer from 0 to 365');
-    const batches=(await withTenant(runtime,a.ctx,(c)=>c.query(`SELECT i.id AS item_id,i.sku,i.name,i.base_uom,b.batch_no,(b.expires_at AT TIME ZONE 'Africa/Casablanca')::date::text AS expires_on,
+    const batches=(await withTenant(runtime,a.ctx,(c)=>c.query(`SELECT i.id AS item_id,i.sku,i.name,i.base_uom,b.batch_no,b.expires_at,(b.expires_at AT TIME ZONE '${SHOP_TZ}')::date::text AS expires_on,
         sum(sb.on_hand) AS on_hand,sum(sb.reserved) AS reserved,
-        ((b.expires_at AT TIME ZONE 'Africa/Casablanca')::date - (now() AT TIME ZONE 'Africa/Casablanca')::date) AS days_left
+        ((b.expires_at AT TIME ZONE '${SHOP_TZ}')::date - (now() AT TIME ZONE '${SHOP_TZ}')::date) AS days_left
       FROM stock_balances sb JOIN batches b ON b.tenant_id=sb.tenant_id AND b.id=sb.batch_id
       JOIN items i ON i.tenant_id=sb.tenant_id AND i.id=sb.item_id
       WHERE sb.branch_id=$1 AND sb.stock_status='sellable' AND sb.on_hand>0 AND b.expires_at IS NOT NULL
-        AND (b.expires_at AT TIME ZONE 'Africa/Casablanca')::date <= (now() AT TIME ZONE 'Africa/Casablanca')::date + $2::int
+        AND (b.expires_at AT TIME ZONE '${SHOP_TZ}')::date <= (now() AT TIME ZONE '${SHOP_TZ}')::date + $2::int
       GROUP BY i.id,i.sku,i.name,i.base_uom,b.batch_no,b.expires_at ORDER BY b.expires_at,i.name LIMIT 200`,[branchId,days]))).rows;
     return {body:{batches}};
   });
@@ -202,7 +202,7 @@ export function registerGrillRoutes(k: Kit) {
       if (!sup) throw new HttpError(404,'NOT_FOUND','supplier not found');
       if (!sup.active) throw new HttpError(409,'INVALID_STATE','supplier archived');
       // Time-dependent rule inside the command: a replay of a committed receipt keeps returning its stored result.
-      const today=new Date().toISOString().slice(0,10);
+      const today=shopToday();
       // stock stops being sellable on its expiry date, so a lot expiring today could never be sold
       lines.forEach((l,i)=>{ if(l.expiresAt&&l.expiresAt<=today)throw bad(`lines[${i}]: this batch is expired or expires today`); });
       const id=(await cc.client.query('INSERT INTO purchase_receipts (tenant_id,supplier_id,branch_id,reference,created_by) VALUES ($1,$2,$3,$4,$5) RETURNING id',

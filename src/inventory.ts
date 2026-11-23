@@ -2,6 +2,7 @@ import type pg from 'pg';
 import type { CommandCtx } from './commands.js';
 import { currentPolicyVersion, getItem, PolicyVersion } from './catalog.js';
 import { conflict, insufficientStock, validation } from './errors.js';
+import { SHOP_TZ } from './http.js';
 
 const ZERO = '00000000-0000-0000-0000-000000000000';
 export const r4 = (x: number) => Math.round(x * 1e4) / 1e4;
@@ -79,6 +80,11 @@ export async function availableQty(c: pg.PoolClient, branchId: string, itemId: s
   return Number(r.rows[0].q);
 }
 
+/** The instant a local calendar day begins in the shop's timezone (DST/Ramadan changes come from the tz database). */
+export async function localMidnight(c: pg.PoolClient | pg.Client | pg.Pool, day: string, tz = SHOP_TZ): Promise<Date> {
+  return (await c.query(`SELECT ($1::date::timestamp AT TIME ZONE $2) AS t`, [day, tz])).rows[0].t as Date;
+}
+
 // ───────────── receipt / adjustment ─────────────
 export async function receiveStock(cc: CommandCtx, p: {
   branchId: string; itemId: string; qty: number; unitCost: number; batchNo?: string; expiresAt?: string | null;
@@ -90,17 +96,20 @@ export async function receiveStock(cc: CommandCtx, p: {
   if (item.batch_tracking === 'required' && !p.batchNo) throw validation(`item ${item.sku} requires a batch`);
   if (p.qty <= 0) throw validation('qty must be > 0');
   let batchId: string | null = null;
+  // A calendar date 'YYYY-MM-DD' means "until the end of the previous local day": store the shop's local midnight,
+  // not UTC midnight (01:00 in Casablanca), so the POS stops selling exactly when the local expiry day begins.
+  const expiresAt = p.expiresAt && /^\d{4}-\d{2}-\d{2}$/.test(p.expiresAt) ? await localMidnight(cc.client, p.expiresAt) : p.expiresAt ?? null;
   if (p.batchNo) {
     const b = await cc.client.query(
       `INSERT INTO batches (tenant_id, item_id, batch_no, expires_at, unit_cost) VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (tenant_id, item_id, batch_no) DO UPDATE SET batch_no = EXCLUDED.batch_no
        RETURNING id, expires_at, ($4::timestamptz IS NOT NULL AND expires_at IS DISTINCT FROM $4::timestamptz) AS expiry_differs`,
-      [cc.tenantId, p.itemId, p.batchNo, p.expiresAt ?? null, p.unitCost]);
+      [cc.tenantId, p.itemId, p.batchNo, expiresAt, p.unitCost]);
     batchId = b.rows[0].id;
     // A batch has ONE expiry. Receiving more of the same batch number with another date would silently keep the old date.
     if (b.rows[0].expiry_differs) {
       if (b.rows[0].expires_at !== null) throw conflict(`batch ${p.batchNo} is already recorded with another expiry date`);
-      await cc.client.query('UPDATE batches SET expires_at=$2 WHERE id=$1', [batchId, p.expiresAt]);
+      await cc.client.query('UPDATE batches SET expires_at=$2 WHERE id=$1', [batchId, expiresAt]);
     }
   }
   if (item.serial_tracking) {

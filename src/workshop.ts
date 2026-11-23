@@ -1,14 +1,13 @@
 import { audit } from './audit.js';
 import { runCommand } from './commands.js';
 import { withTenant } from './db.js';
-import { HttpError, arr, bad, num, optStr, optUuid, oneOf, str, uuid } from './http.js';
+import { HttpError, SHOP_TZ, arr, bad, num, optStr, optUuid, oneOf, shopToday, str, uuid } from './http.js';
 import type { Authz, Kit } from './kit.js';
 import { cancelOrder, confirmOrder, createOrder, payOrder } from './sales.js';
 
 const moneyTypes = ['cash','card','transfer'] as const;
 const plateName=(x:unknown)=>str(x,'plate',30).toUpperCase().replace(/\s+/g,' ').trim();
-/** Shops run on Moroccan local days: a warranty given on delivery ends N calendar days after the local delivery date. */
-export const SHOP_TZ='Africa/Casablanca';
+/** A warranty given on delivery ends N calendar days after the LOCAL delivery date (SHOP_TZ). */
 const WARRANTY_UNTIL=`CASE WHEN w.delivered_at IS NOT NULL AND w.warranty_days>0
   THEN ((w.delivered_at AT TIME ZONE '${SHOP_TZ}')::date + w.warranty_days) END`;
 
@@ -107,7 +106,7 @@ export function registerWorkshopRoutes(k:Kit){
         WHERE o.vehicle_id=$1 ORDER BY o.changed_at DESC,o.id LIMIT 100`,[id])).rows;
       // branch-scoped staff only see the repairs of their own branches
       const repairs=(await c.query(`SELECT w.id,w.branch_id,w.state,w.issue_note,w.quote_total,w.mileage_at_visit,w.warranty_days,
-          w.delivered_at,w.invoice_id,(${WARRANTY_UNTIL})::text AS warranty_until,
+          w.created_at,w.delivered_at,w.invoice_id,(${WARRANTY_UNTIL})::text AS warranty_until,
           (${WARRANTY_UNTIL})>=(now() AT TIME ZONE '${SHOP_TZ}')::date AS in_warranty
         FROM workshop_orders w WHERE w.vehicle_id=$1 AND (cardinality($2::uuid[])=0 OR w.branch_id=ANY($2::uuid[]))
         ORDER BY w.created_at DESC LIMIT 100`,[id,a.branchIds])).rows;
@@ -154,7 +153,7 @@ export function registerWorkshopRoutes(k:Kit){
     const result=await runCommand(runtime,a.ctx,{key:idemKey(rc),type:'workshop_quote',payload:p},async(cc)=>{
       // Time-dependent check lives inside the command: a replay of an already committed quote returns the stored result
       // even after the date has passed, instead of a 400 that would hide the quote from the client.
-      if(p.nextServiceDate&&p.nextServiceDate<=new Date().toISOString().slice(0,10))throw bad('nextServiceDate must be in the future');
+      if(p.nextServiceDate&&p.nextServiceDate<=shopToday())throw bad('nextServiceDate must be in the future');
       const vehicle=(await cc.client.query('SELECT * FROM workshop_vehicles WHERE id=$1 FOR UPDATE',[vehicleId])).rows[0];
       if(!vehicle)throw new HttpError(404,'NOT_FOUND','vehicle not found');
       if(mileage<Number(vehicle.odometer_km))throw new HttpError(409,'INVALID_STATE','mileage is lower than recorded odometer');
