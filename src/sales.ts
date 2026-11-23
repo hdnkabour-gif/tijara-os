@@ -67,9 +67,10 @@ export async function createOrder(cc: CommandCtx, p: { branchId: string; custome
     const price = l.unitPrice ?? Number(item.price);
     const r = await cc.client.query(
       `INSERT INTO sales_order_lines (tenant_id, order_id, line_no, item_id, fulfillment, ordered_qty, unit_price,
-          line_total, prep_required, serial_no)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,round($6::numeric*$7::numeric,2),$8,$9) RETURNING id`,
-      [cc.tenantId, orderId, ++n, l.itemId, item.fulfillment, l.qty, price, l.prepRequired ?? false, l.serialNo ?? null]);
+          line_total, prep_required, serial_no, item_name_at_sale, item_sku_at_sale, base_uom_at_sale)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,round($6::numeric*$7::numeric,2),$8,$9,$10,$11,$12) RETURNING id`,
+      [cc.tenantId, orderId, ++n, l.itemId, item.fulfillment, l.qty, price, l.prepRequired ?? false, l.serialNo ?? null,
+        item.name, item.sku, item.base_uom]);
     lineIds.push(r.rows[0].id);
   }
   await recalcTotal(cc, orderId);
