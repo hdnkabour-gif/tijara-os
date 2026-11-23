@@ -73,6 +73,52 @@ describe('web UI in a real browser', () => {
     await mobile.ctx.close();
   });
 
+  it('E12: workshop browser creates vehicle and delivers service invoice; mobile Arabic routes fit', async () => {
+    const shop=await createShop(api,admin,'pro','Workshop E2E',['mechanic']);
+    const service=(await api.call('GET','/items',{token:shop.ownerToken})).json.items.find((i:any)=>i.sku==='MEC-VIDANGE');
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,shop.ownerEmail);
+    await page.waitForSelector('#tile-sales');
+    await page.locator('nav.nav').getByRole('link',{name:'Véhicules',exact:true}).click();
+    await page.getByRole('button',{name:/Ajouter un véhicule/}).click();
+    await page.fill('#v-plate','18-A-501');
+    await page.fill('#v-make','Dacia');
+    await page.fill('#v-model','Logan');
+    await page.fill('#v-km','40000');
+    await page.locator('.modal button[type=submit]').click();
+    await page.getByText(/18-A-501/).waitFor();
+    await page.locator('nav.nav').getByRole('link',{name:'Atelier & réparations',exact:true}).click();
+    await page.getByRole('button',{name:/Nouveau devis/}).click();
+    await page.selectOption('#wo-item',service.id);
+    await page.fill('#wo-qty','1');
+    await page.fill('#wo-km','40000');
+    await page.fill('#wo-warranty','60');
+    await page.fill('#wo-next-date','2025-01-01');
+    await page.locator('.modal button[type=submit]').click();
+    await page.getByText('18-A-501').waitFor();
+    await page.getByRole('button',{name:'Approuver le devis'}).click();
+    await page.getByRole('button',{name:'Commencer'}).click();
+    await page.getByRole('button',{name:'Terminer'}).click();
+    await page.getByRole('button',{name:'Livrer et facturer'}).click();
+    await page.locator('.modal button[type=submit]').click();
+    await page.getByText('Livré').waitFor();
+    const invoices=(await api.call('GET','/invoices',{token:shop.ownerToken})).json.invoices;
+    expect(invoices).toHaveLength(1);
+    expect(Number(invoices[0].total)).toBe(150);
+    expect(problems).toEqual([]);
+    await ctx.close();
+
+    const mobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(mobile.page,shop.ownerEmail);
+    await mobile.page.waitForSelector('#tile-sales');
+    await mobile.page.locator('nav.nav').getByRole('link',{name:'الورشة والإصلاح'}).click();
+    await mobile.page.getByText('الورشة وأوامر الإصلاح').waitFor();
+    expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(mobile.problems).toEqual([]);
+    await mobile.ctx.close();
+  });
+
   it('E1 (desktop, FR): platform admin creates a shop by activity; owner runs a full weighed sale with grilling; stock, dashboard and cancellation reflect it', async () => {
     const { ctx, page, problems } = await newPage();
     // 1) platform administrator creates the shop through the UI
