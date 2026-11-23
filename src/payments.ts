@@ -44,7 +44,8 @@ export async function issueInvoiceAndPay(cc: CommandCtx, order: { id: string; cu
   const due = Math.round((total - paid) * 100) / 100;
   if (due > 0) {
     if (!order.customer_id) throw validation('unpaid balance requires an identified customer (credit sale)');
-    const cust = (await cc.client.query(`SELECT credit_limit FROM customers WHERE id=$1 FOR UPDATE`, [order.customer_id])).rows[0];
+    const cust = (await cc.client.query(`SELECT credit_limit, active FROM customers WHERE id=$1 FOR UPDATE`, [order.customer_id])).rows[0];
+    if (!cust?.active) throw invalidState('archived customer cannot purchase on credit');
     const bal = await customerBalance(cc.client, order.customer_id);
     if (bal + due > Number(cust.credit_limit)) throw invalidState(`credit limit exceeded (${bal + due} > ${cust.credit_limit})`);
   }
