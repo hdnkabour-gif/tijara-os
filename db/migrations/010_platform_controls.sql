@@ -157,7 +157,7 @@ REVOKE ALL ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jso
 GRANT EXECUTE ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jsonb) TO app_platform;
 
 CREATE FUNCTION platform_list_tenant_controls()
-RETURNS TABLE(id uuid,name text,slug text,plan_id text,status text,status_reason text,
+RETURNS TABLE(id uuid,name text,slug text,plan_id text,activities jsonb,status text,status_reason text,
   max_users int,max_items int,max_branches int,max_customers int,max_monthly_orders int,
   overrides jsonb,features jsonb,users int,items int,branches int,customers int,monthly_orders int,created_at timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
@@ -165,7 +165,7 @@ DECLARE r record;
 BEGIN
   FOR r IN
     SELECT t.id tid,t.name tname,t.slug tslug,t.plan_id tplan,t.status tstatus,t.status_reason treason,
-           t.created_at tcreated,p.features tfeatures,
+           t.created_at tcreated,t.settings->'activities' tactivities,p.features tfeatures,
            COALESCE(q.max_users,p.max_users) ulimit,COALESCE(q.max_items,p.max_items) ilimit,
            COALESCE(q.max_branches,p.max_branches) blimit,COALESCE(q.max_customers,p.max_customers) climit,
            COALESCE(q.max_monthly_orders,p.max_monthly_orders) olimit,to_jsonb(q) qos
@@ -173,7 +173,7 @@ BEGIN
       ORDER BY t.created_at DESC
   LOOP
     PERFORM set_config('app.tenant_id',r.tid::text,true);
-    RETURN QUERY SELECT r.tid,r.tname,r.tslug,r.tplan,r.tstatus,r.treason,
+    RETURN QUERY SELECT r.tid,r.tname,r.tslug,r.tplan,r.tactivities,r.tstatus,r.treason,
         r.ulimit,r.ilimit,r.blimit,r.climit,r.olimit,
         COALESCE(r.qos,'{}'::jsonb),r.tfeatures,
         (SELECT count(*)::int FROM memberships m WHERE m.tenant_id=r.tid AND m.active),
