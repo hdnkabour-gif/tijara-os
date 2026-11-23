@@ -15,6 +15,10 @@ const WARRANTY_UNTIL=`CASE WHEN w.delivered_at IS NOT NULL AND w.warranty_days>0
 /** Workshop uses existing sales-order + immutable invoice + stock reservation engines.
  * Quotes do NOT reserve stock; approval reserves, delivery issues the invoice.
  */
+/** Who owns a car is customer data: staff without customers.view see the vehicle, not the owner. */
+const hideCustomer=<T extends Record<string,any>>(a:Authz,row:T):T=>
+  a.permissions.includes('customers.view')?row:{...row,customer_id:null,customer_name:null};
+
 export function registerWorkshopRoutes(k:Kit){
   const {add,authorize,runtime,idemKey}=k;
   const protectedOrder=async(a:Authz,id:string)=>{
@@ -33,7 +37,7 @@ export function registerWorkshopRoutes(k:Kit){
          FROM workshop_vehicles v LEFT JOIN customers c ON c.tenant_id=v.tenant_id AND c.id=v.customer_id
         WHERE ($1::text='' OR v.plate ILIKE '%'||$1||'%' OR v.make ILIKE '%'||$1||'%' OR v.model ILIKE '%'||$1||'%')
         ORDER BY v.updated_at DESC LIMIT 200`,[q]))).rows;
-    return {body:{vehicles}};
+    return {body:{vehicles:vehicles.map(v=>hideCustomer(a,v))}};
   });
   add('POST','/workshop/vehicles','session',async(rc)=>{
     const a=await authorize(rc,'workshop.manage'),b=rc.body;
@@ -111,7 +115,7 @@ export function registerWorkshopRoutes(k:Kit){
           (${WARRANTY_UNTIL})>=(now() AT TIME ZONE '${SHOP_TZ}')::date AS in_warranty
         FROM workshop_orders w WHERE w.vehicle_id=$1 AND (cardinality($2::uuid[])=0 OR w.branch_id=ANY($2::uuid[]))
         ORDER BY w.created_at DESC LIMIT 100`,[id,a.branchIds])).rows;
-      return {vehicle,owners,repairs};
+      return {vehicle:hideCustomer(a,vehicle),owners:owners.map((o:any)=>hideCustomer(a,o)),repairs};
     });
     return {body:out};
   });

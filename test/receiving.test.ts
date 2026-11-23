@@ -171,6 +171,15 @@ describe('PR-A vehicles: owner and plate changes, warranty end, reminders',()=>{
     const m=await staff(api,A,'mechanic_only');
     expect((await api.call('PATCH',`/workshop/vehicles/${v1}`,{token:m.token,body:{customerId:null}})).status).toBe(403);
     expect((await api.call('PATCH',`/workshop/vehicles/${v1}`,{token:m.token,body:{plate:'66-F-6666'}})).status).toBe(200);
+    // ...and does not see who owns the cars (customer data), in the list or in the history
+    const owned=await vehicle('77-G-7000',1000,await customer('Private owner'));
+    const list=(await api.call('GET','/workshop/vehicles',as(m.token))).json.vehicles;
+    expect(list.find((x:any)=>x.id===owned)).toMatchObject({plate:'77-G-7000',customer_id:null,customer_name:null});
+    const hist=(await api.call('GET',`/workshop/vehicles/${owned}`,as(m.token))).json;
+    expect(hist.vehicle.customer_name).toBeNull();
+    expect(hist.owners.every((o:any)=>o.customer_name===null&&o.customer_id===null)).toBe(true);
+    expect(JSON.stringify(hist)).not.toContain('Private owner');
+    expect((await api.call('GET',`/workshop/vehicles/${owned}`,as(A.ownerToken))).json.vehicle.customer_name).toBe('Private owner');
     expect((await api.call('GET',`/workshop/vehicles/${v1}`,as(A.ownerToken))).json.owners).toHaveLength(2);
   });
 
