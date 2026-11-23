@@ -3,7 +3,7 @@
 -- user identity or take over a platform administrator via password reset.
 
 CREATE OR REPLACE FUNCTION auth_admin_set_password(p_user uuid, p_hash text) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE v_actor uuid; v_memberships int;
 BEGIN
   IF app_tenant() IS NULL OR app_user() IS NULL THEN
@@ -34,7 +34,7 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION auth_set_user_name(p_user uuid, p_name text) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE v_actor uuid; v_memberships int;
 BEGIN
   IF app_tenant() IS NULL THEN RAISE EXCEPTION 'no tenant context' USING ERRCODE = '42501'; END IF;
