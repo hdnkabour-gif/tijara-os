@@ -38,6 +38,8 @@ ALTER TABLE tenant_quotas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_quotas FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_quotas_isolation ON tenant_quotas
   USING (tenant_id = app_tenant()) WITH CHECK (tenant_id = app_tenant());
+-- The migration-owned platform listing function runs as app_owner, never as app_runtime.
+CREATE POLICY tenant_quotas_platform_read ON tenant_quotas FOR SELECT TO app_owner USING (true);
 GRANT SELECT ON tenant_quotas TO app_runtime;
 
 -- Common advisory lock serializes concurrent creations for the same tenant & quota type.
