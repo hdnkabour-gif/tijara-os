@@ -264,18 +264,23 @@ export function registerAdminRoutes(k: Kit) {
     const a = await authorize(rc, 'sale.view'), id = uuid(rc.params.id, 'id');
     const out = await withTenant(runtime, a.ctx, async (c) => {
       const inv = (await c.query(
-        `SELECT i.id, i.invoice_no, i.total, i.status, i.created_at, i.order_id, o.discount_pct, b.name AS branch_name, cu.name AS customer_name, cu.phone AS customer_phone
+        `SELECT i.id, i.invoice_no, i.total, i.status, i.created_at, i.order_id, i.display_snapshot, o.discount_pct,
+                COALESCE(i.display_snapshot->>'branchName', b.name) AS branch_name,
+                COALESCE(i.display_snapshot->>'customerName', cu.name) AS customer_name,
+                COALESCE(i.display_snapshot->>'customerPhone', cu.phone) AS customer_phone
            FROM invoices i JOIN sales_orders o ON o.tenant_id=i.tenant_id AND o.id=i.order_id
            JOIN branches b ON b.tenant_id=o.tenant_id AND b.id=o.branch_id LEFT JOIN customers cu ON cu.tenant_id=o.tenant_id AND cu.id=o.customer_id
           WHERE i.id=$1`, [id])).rows[0];
       if (!inv) throw new HttpError(404, 'NOT_FOUND', 'invoice not found');
       const lines = (await c.query(
-        `SELECT l.line_no, it.sku, it.name, COALESCE(l.actual_qty, l.ordered_qty) AS qty, it.base_uom, l.unit_price, l.line_total
-           FROM sales_order_lines l JOIN items it ON it.tenant_id=l.tenant_id AND it.id=l.item_id WHERE l.order_id=$1 AND l.state<>'void' ORDER BY l.line_no`, [inv.order_id])).rows;
+        `SELECT l.line_no, l.item_sku_at_sale AS sku, l.item_name_at_sale AS name,
+                COALESCE(l.actual_qty, l.ordered_qty) AS qty, l.base_uom_at_sale AS base_uom, l.unit_price, l.line_total
+           FROM sales_order_lines l WHERE l.order_id=$1 AND l.state<>'void' ORDER BY l.line_no`, [inv.order_id])).rows;
       const pays = (await c.query(
         `SELECT p.method, pa.amount, p.created_at FROM payment_allocations pa JOIN payments p ON p.tenant_id=pa.tenant_id AND p.id=pa.payment_id WHERE pa.invoice_id=$1 ORDER BY p.created_at`, [id])).rows;
+      const { display_snapshot: snapshot, ...invoice } = inv;
       const t = (await c.query('SELECT name, settings FROM tenants WHERE id=$1', [a.ctx.tenantId])).rows[0];
-      return { invoice: inv, lines, payments: pays, shop: { name: t.name, company: t.settings?.company ?? {} } };
+      return { invoice, lines, payments: pays, shop: snapshot?.shop ?? { name: t.name, company: t.settings?.company ?? {} } };
     });
     return { body: out };
   });
