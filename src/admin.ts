@@ -124,9 +124,17 @@ export function registerAdminRoutes(k: Kit) {
           if (perms.some((p) => !a.permissions.includes(p))) throw new HttpError(403, 'FORBIDDEN', 'you cannot assign a role with permissions you do not have');
         }
       }
-      if (branchIds && branchIds.length) {
-        const ok = (await c.query('SELECT count(*)::int n FROM branches WHERE id = ANY($1::uuid[])', [branchIds])).rows[0].n;
-        if (ok !== new Set(branchIds).size) throw bad('unknown branch');
+      if (branchIds !== undefined) {
+        // Branch access is an authorization boundary, not a profile preference. Empty = ALL branches.
+        if (self) throw new HttpError(403, 'FORBIDDEN', 'you cannot change your own branch scope');
+        if (new Set(branchIds).size !== branchIds.length) throw bad('duplicate branch');
+        if (a.branchIds.length && (!branchIds.length || branchIds.some((bid: string) => !a.branchIds.includes(bid)))) {
+          throw new HttpError(403, 'FORBIDDEN', 'cannot grant branch access outside your own scope');
+        }
+        if (branchIds.length) {
+          const ok = (await c.query('SELECT count(*)::int n FROM branches WHERE id = ANY($1::uuid[])', [branchIds])).rows[0].n;
+          if (ok !== branchIds.length) throw bad('unknown branch');
+        }
       }
       await c.query('UPDATE memberships SET role_id=COALESCE($2,role_id), branch_ids=COALESCE($3,branch_ids), active=COALESCE($4,active) WHERE user_id=$1',
         [id, roleId, branchIds ?? null, active ?? null]);
@@ -138,13 +146,16 @@ export function registerAdminRoutes(k: Kit) {
 
   add('POST', '/users/:id/password', 'session', async (rc) => {
     const a = await authorize(rc, 'users.manage'), id = uuid(rc.params.id, 'id');
+    // Password is global to a user, not tenant-scoped. Delegated HR cannot take over more-privileged accounts.
+    if (a.roleName !== 'owner' || id === a.ctx.userId) {
+      throw new HttpError(403, 'FORBIDDEN', 'only an owner may reset another member password');
+    }
     const pwErr = checkPasswordPolicy(rc.body.password);
     if (pwErr) throw bad(pwErr);
     const hash = await hashPassword(rc.body.password);
     await withTenant(runtime, a.ctx, async (c) => {
       const t = (await c.query(`SELECT r.name AS role_name FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id WHERE m.user_id=$1`, [id])).rows[0];
       if (!t) throw new HttpError(404, 'NOT_FOUND', 'user not found');
-      if (t.role_name === 'owner' && a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only an owner can reset an owner password');
       if (!(await c.query('SELECT auth_admin_set_password($1,$2) AS ok', [id, hash])).rows[0].ok) throw new HttpError(404, 'NOT_FOUND', 'user not found');
       await audit(c, a.ctx.tenantId, a.ctx.userId, 'user.password_reset', { type: 'user', id });     // never records the password
     });
@@ -223,13 +234,19 @@ export function registerAdminRoutes(k: Kit) {
 
   // ───────────── shop identity (printed on invoices) ─────────────
   add('PATCH', '/tenant', 'session', async (rc) => {
-    const a = await authorize(rc, 'settings.manage'), c0 = rc.body.company ?? {};
-    const company = {
-      legalName: optText(c0.legalName, 'legalName', 200), address: optText(c0.address, 'address', 300), phone: optText(c0.phone, 'phone', 40),
-      ice: optText(c0.ice, 'ice', 30), if: optText(c0.if, 'if', 30), rc: optText(c0.rc, 'rc', 30), footer: optText(c0.footer, 'footer', 300),
-    };
+    const a = await authorize(rc, 'settings.manage'), rawCompany = rc.body.company;
+    if (rawCompany != null && (typeof rawCompany !== 'object' || Array.isArray(rawCompany))) throw bad('company must be an object');
+    const limits: Record<string, number> = { legalName: 200, address: 300, phone: 40, ice: 30, if: 30, rc: 30, footer: 300 };
+    const company: Record<string, string> = {};
+    for (const [key, limit] of Object.entries(limits)) {
+      if (rawCompany != null && Object.prototype.hasOwnProperty.call(rawCompany, key)) {
+        company[key] = optText(rawCompany[key], key, limit);
+      }
+    }
+    const name = optStr(rc.body.name, 'name', 100);
+    if (name === undefined && Object.keys(company).length === 0) throw bad('nothing to update');
     await withTenant(runtime, a.ctx, async (c) => {
-      await c.query('SELECT tenant_update_settings($1,$2::jsonb)', [optStr(rc.body.name, 'name', 100) ?? null, JSON.stringify(company)]);
+      await c.query('SELECT tenant_update_settings($1,$2::jsonb)', [name ?? null, JSON.stringify(company)]);
       await audit(c, a.ctx.tenantId, a.ctx.userId, 'settings.updated', { type: 'tenant', id: a.ctx.tenantId });
     });
     return { body: { status: 'ok' } };
