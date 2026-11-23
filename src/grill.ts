@@ -34,7 +34,7 @@ export function registerGrillRoutes(k: Kit) {
          FROM sales_orders o
          JOIN sales_order_lines l ON l.tenant_id=o.tenant_id AND l.order_id=o.id AND l.prep_required
         WHERE o.branch_id=$1 AND o.state IN ('confirmed','in_preparation','ready')
-        GROUP BY o.id ORDER BY o.created_at LIMIT 100`, [branchId]))).rows;
+        GROUP BY o.tenant_id,o.id ORDER BY o.created_at LIMIT 100`, [branchId]))).rows;
     return { body: { orders } };
   });
 
