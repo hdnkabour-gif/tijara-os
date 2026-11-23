@@ -2,7 +2,8 @@ import { getLang, setLang, t } from './i18n.js';
 import { api, clear, friendly, h, toast } from './lib.js';
 import { forgotView, loginView, resetView, tenantPicker } from './auth-views.js';
 import { platformView } from './platform.js';
-import { customersView, dashboardView, invoicesView, itemsView, stockView, usersView } from './shop-views.js';
+import { customersView, dashboardView, invoicesView, itemsView, stockView } from './shop-views.js';
+import { invoiceView, journalView, rolesView, settingsView, teamView } from './admin-views.js';
 import { posView } from './pos.js';
 
 const root = document.getElementById('app');
@@ -17,7 +18,11 @@ const ROUTES = [
   { path: 'stock', label: 'nav_stock', show: () => can('stock.view'), view: stockView },
   { path: 'customers', label: 'nav_customers', show: () => can('customers.view'), view: customersView },
   { path: 'invoices', label: 'nav_invoices', show: () => can('sale.view'), view: invoicesView },
-  { path: 'users', label: 'nav_users', show: () => can('users.manage'), view: usersView },
+  { path: 'users', label: 'nav_users', show: () => can('users.manage'), view: teamView },
+  { path: 'roles', label: 'nav_roles', show: () => can('users.manage'), view: rolesView },
+  { path: 'settings', label: 'nav_settings', show: () => can('settings.manage') || can('branches.manage'), view: settingsView },
+  { path: 'journal', label: 'nav_journal', show: () => can('audit.view'), view: journalView },
+  { path: 'invoice', label: 'invoiceTitle', show: () => can('sale.view'), view: invoiceView, hidden: true },
   { path: 'platform', label: 'nav_platform', show: () => S.me?.isPlatformAdmin, view: platformView },
 ];
 
@@ -65,7 +70,7 @@ async function render() {
   const visible = ROUTES.filter((r) => r.show());
   let current = visible.find((r) => r.path === path);
   if (!current) {
-    current = visible[0];
+    current = visible.filter((r) => !r.hidden)[0];
     if (!current) {
       return void root.appendChild(publicShell(h('main', null, h('div', { class: 'card' }, h('p', null, S.me.user.name), h('button', { class: 'btn', onclick: logout }, t('logout'))))));
     }
@@ -86,7 +91,7 @@ async function render() {
         h('button', { type: 'button', onclick: logout }, t('logout')))),
     h('nav', { class: 'nav', 'aria-label': 'navigation' },
       h('span', { class: 'nav-section-label' }, t('workspaceNav')),
-      visible.map((r) => h('a', { href: `#/${r.path}`, ...(r.path === current.path ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
+      visible.filter((r) => !r.hidden).map((r) => h('a', { href: `#/${r.path}`, ...(r.path === current.path ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
     main));
   try {
     const view = await current.view(S, query);

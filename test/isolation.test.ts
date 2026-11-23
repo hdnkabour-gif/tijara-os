@@ -45,8 +45,9 @@ describe('tenant isolation (RLS) — T9, T10, T11', () => {
     const ord = (await withTenant(runtime, B.ctx(), (c) => c.query(
       `INSERT INTO sales_orders (tenant_id, branch_id) VALUES ($1,$2) RETURNING id`, [B.tenantId, B.branchId]))).rows[0].id;
     await expect(withTenant(runtime, B.ctx(), (c) => c.query(
-      `INSERT INTO sales_order_lines (tenant_id, order_id, line_no, item_id, fulfillment, ordered_qty, unit_price)
-       VALUES ($1,$2,1,$3,'stock',1,1)`, [B.tenantId, ord, ids.beef]))).rejects.toMatchObject({ code: '23503' });
+      `INSERT INTO sales_order_lines (tenant_id, order_id, line_no, item_id, fulfillment, ordered_qty, unit_price,
+         item_name_at_sale, item_sku_at_sale, base_uom_at_sale)
+       VALUES ($1,$2,1,$3,'stock',1,1,'Foreign item','X-01','kg')`, [B.tenantId, ord, ids.beef]))).rejects.toMatchObject({ code: '23503' });
   });
 
   it('T10: runtime role cannot bypass RLS, owns nothing, cannot create tenants; all tenant tables are FORCE-RLS', async () => {

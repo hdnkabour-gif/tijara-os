@@ -16,7 +16,7 @@ export async function posView(S) {
   const [{ items }, custRes] = await Promise.all([api('GET', '/items'), S.me.permissions.includes('customers.view') ? api('GET', '/customers') : { customers: [] }]);
   const sellable = items.filter((i) => i.active);
   let branchId = S.branches[0]?.id, filter = 'all', q = '', cart = [], key = newKey(), busy = false, finished = null;
-  const customers = custRes.customers;
+  const customers = custRes.customers.filter((c) => c.active !== false);   // archived customers cannot buy on credit
   let customerId = '';
 
   const catalogEl = h('div', { class: 'catalog', id: 'catalog' });

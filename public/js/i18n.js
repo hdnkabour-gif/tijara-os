@@ -61,6 +61,47 @@ const ar = {
   setupCreate: 'إنشاء المؤسسة', setupActivities: 'اختيار الأنشطة', setupDemo: 'التجربة ببيانات افتراضية', startFirstShop: 'إنشاء المؤسسة الأولى',
   act_butcher: 'جزارة', act_grill: 'مشوي', act_restaurant: 'مطعم', act_grocery: 'مواد غذائية', act_equipment: 'معدات وقطع غيار', act_mechanic: 'ميكانيكا السيارات', act_security_systems: 'أنظمة الإنذار والحريق',
 };
+
+Object.assign(fr, {
+  edit: 'Modifier', del: 'Supprimer', archive: 'Archiver', restore: 'Réactiver', actions: 'Actions', saved: 'Enregistré', deleted: 'Supprimé', yes: 'Oui', no: 'Non',
+  confirmDelete: 'Supprimer définitivement ?', inUseHint: 'Cet élément a un historique : archivez-le au lieu de le supprimer.', archived: 'archivé', activeLabel: 'Actif',
+  showArchived: 'Afficher les archivés', address: 'Adresse', notes: 'Notes', print: 'Imprimer', back: 'Retour',
+  nav_roles: 'Rôles & permissions', nav_settings: 'Paramètres', nav_journal: 'Journal',
+  role_owner: 'Propriétaire', role_manager: 'Gérant', role_cashier: 'Caissier',
+  editUser: 'Modifier le collaborateur', resetPassword: 'Réinitialiser le mot de passe', deactivate: 'Désactiver', reactivate: 'Réactiver', inactive: 'inactif', userActive: 'actif',
+  resetNote: 'Toutes les sessions de ce collaborateur seront fermées.', selfNote: 'Vous ne pouvez pas modifier votre propre rôle ni vous désactiver.',
+  newRole: 'Nouveau rôle', roleCode: 'Nom du rôle (minuscules, chiffres, _)', permissions: 'Permissions', members: 'Membres', systemRole: 'rôle système', lockedRole: 'Ce rôle ne peut pas être modifié.',
+  g_catalog: 'Produits', g_stock: 'Stock', g_sales: 'Ventes', g_customers: 'Clients', g_team: 'Équipe', g_reports: 'Rapports', g_approvals: 'Validations', g_settings: 'Paramètres',
+  'p_catalog.view': 'Voir les produits', 'p_catalog.manage': 'Gérer les produits et services', 'p_stock.view': 'Voir le stock', 'p_stock.receive': 'Réceptionner du stock', 'p_stock.adjust': 'Ajuster le stock',
+  'p_sale.view': 'Voir les ventes', 'p_sale.create': 'Vendre (caisse)', 'p_sale.discount': 'Accorder des remises', 'p_sale.price_override': 'Modifier un prix en caisse', 'p_sale.void': 'Annuler une vente',
+  'p_customers.view': 'Voir les clients', 'p_customers.manage': 'Gérer les clients', 'p_users.manage': 'Gérer l’équipe et les rôles', 'p_branches.view': 'Voir les points de vente', 'p_branches.manage': 'Gérer les points de vente',
+  'p_report.view': 'Voir le tableau de bord', 'p_report.view_profit': 'Voir les marges', 'p_audit.view': 'Voir le journal', 'p_approvals.decide': 'Valider les demandes', 'p_settings.manage': 'Gérer les paramètres du commerce',
+  shopName: 'Nom du commerce', company: 'Informations légales (imprimées sur les factures)', legalName: 'Raison sociale', ice: 'ICE', ifNo: 'IF', rcNo: 'RC', footer: 'Message en pied de facture', phoneShop: 'Téléphone',
+  branchesTitle: 'Points de vente', addBranch: 'Ajouter un point de vente', rename: 'Renommer',
+  journalTitle: 'Journal des opérations', who: 'Par', what: 'Action', onWhat: 'Objet',
+  invoiceTitle: 'Facture', customerLbl: 'Client', branchLbl: 'Point de vente', subtotal: 'Sous-total', paymentsLbl: 'Règlements', methodCash: 'Espèces', methodCard: 'Carte', methodTransfer: 'Virement', thanks: 'Merci de votre confiance.',
+  qtyShort: 'Qté', puHt: 'Prix unitaire', totalLine: 'Total',
+});
+Object.assign(ar, {
+  edit: 'تعديل', del: 'حذف', archive: 'أرشفة', restore: 'إعادة تفعيل', actions: 'إجراءات', saved: 'تم الحفظ', deleted: 'تم الحذف', yes: 'نعم', no: 'لا',
+  confirmDelete: 'حذف نهائي؟', inUseHint: 'لهذا العنصر سجل عمليات: أرشفه بدل حذفه.', archived: 'مؤرشف', activeLabel: 'نشط',
+  showArchived: 'إظهار المؤرشف', address: 'العنوان', notes: 'ملاحظات', print: 'طباعة', back: 'رجوع',
+  nav_roles: 'الأدوار والصلاحيات', nav_settings: 'الإعدادات', nav_journal: 'سجل العمليات',
+  role_owner: 'المالك', role_manager: 'المدير', role_cashier: 'الكاشير',
+  editUser: 'تعديل الموظف', resetPassword: 'إعادة تعيين كلمة المرور', deactivate: 'تعطيل', reactivate: 'إعادة تفعيل', inactive: 'معطّل', userActive: 'نشط',
+  resetNote: 'سيتم إغلاق جميع جلسات هذا الموظف.', selfNote: 'لا يمكنك تغيير دورك ولا تعطيل نفسك.',
+  newRole: 'دور جديد', roleCode: 'اسم الدور (أحرف صغيرة وأرقام و _)', permissions: 'الصلاحيات', members: 'الأعضاء', systemRole: 'دور أساسي', lockedRole: 'لا يمكن تعديل هذا الدور.',
+  g_catalog: 'المنتجات', g_stock: 'المخزون', g_sales: 'المبيعات', g_customers: 'العملاء', g_team: 'الفريق', g_reports: 'التقارير', g_approvals: 'الموافقات', g_settings: 'الإعدادات',
+  'p_catalog.view': 'عرض المنتجات', 'p_catalog.manage': 'إدارة المنتجات والخدمات', 'p_stock.view': 'عرض المخزون', 'p_stock.receive': 'استلام المخزون', 'p_stock.adjust': 'تعديل المخزون',
+  'p_sale.view': 'عرض المبيعات', 'p_sale.create': 'البيع (الكاشير)', 'p_sale.discount': 'منح خصومات', 'p_sale.price_override': 'تعديل السعر عند البيع', 'p_sale.void': 'إلغاء بيع',
+  'p_customers.view': 'عرض العملاء', 'p_customers.manage': 'إدارة العملاء', 'p_users.manage': 'إدارة الفريق والأدوار', 'p_branches.view': 'عرض نقاط البيع', 'p_branches.manage': 'إدارة نقاط البيع',
+  'p_report.view': 'عرض لوحة التحكم', 'p_report.view_profit': 'عرض الأرباح', 'p_audit.view': 'عرض سجل العمليات', 'p_approvals.decide': 'البتّ في الطلبات', 'p_settings.manage': 'إدارة إعدادات المحل',
+  shopName: 'اسم المحل', company: 'المعلومات القانونية (تُطبع على الفواتير)', legalName: 'الاسم القانوني', ice: 'ICE', ifNo: 'IF', rcNo: 'RC', footer: 'عبارة أسفل الفاتورة', phoneShop: 'الهاتف',
+  branchesTitle: 'نقاط البيع', addBranch: 'إضافة نقطة بيع', rename: 'إعادة تسمية',
+  journalTitle: 'سجل العمليات', who: 'بواسطة', what: 'الإجراء', onWhat: 'الموضوع',
+  invoiceTitle: 'فاتورة', customerLbl: 'العميل', branchLbl: 'نقطة البيع', subtotal: 'المجموع الفرعي', paymentsLbl: 'المدفوعات', methodCash: 'نقداً', methodCard: 'بطاقة', methodTransfer: 'تحويل', thanks: 'شكراً لثقتكم.',
+  qtyShort: 'الكمية', puHt: 'سعر الوحدة', totalLine: 'المجموع',
+});
 const dicts = { fr, ar };
 let lang = 'fr';
 try { const s = localStorage.getItem('lang'); lang = s === 'ar' || s === 'fr' ? s : (navigator.language || '').startsWith('ar') ? 'ar' : 'fr'; } catch { /* storage may be blocked */ }
@@ -81,3 +122,5 @@ export const qtyFmt = (v) => new Intl.NumberFormat(lang === 'ar' ? 'ar-MA-u-nu-l
 export const dateFmt = (v) => new Date(v).toLocaleString(lang === 'ar' ? 'ar-MA-u-nu-latn' : 'fr-MA', { dateStyle: 'short', timeStyle: 'short' });
 
 export const uom = (u) => (lang === 'ar' ? ({ kg: 'كلغ', g: 'غ', l: 'لتر', unit: 'قطعة' }[u] ?? u) : (u === 'unit' ? 'pièce' : u));
+
+export const roleLabel = (n) => { const v = t('role_' + n); return v === 'role_' + n ? n : v; };

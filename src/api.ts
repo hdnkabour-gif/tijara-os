@@ -10,16 +10,13 @@ import { receiveStock } from './inventory.js';
 import { platformCreateShop } from './tenancy.js';
 import { ACTIVITIES, activityIds } from './templates.js';
 import { serveUi } from './static.js';
+import { registerAdminRoutes } from './admin.js';
+import type { Handler, Rc } from './kit.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
 
 export interface AppDeps { runtime: pg.Pool; platform: pg.Pool; production: boolean; trustProxy?: boolean; version?: string; expectedMigrations?: string[]; uiRoot?: string }
 
-interface Rc {
-  req: http.IncomingMessage; body: any; query: URLSearchParams; params: Record<string, string>;
-  token: string | null; session: authm.SessionInfo | null; ip: string; viaCookie: boolean;
-}
-type Handler = (rc: Rc) => Promise<{ status?: number; body: unknown; headers?: Record<string, string | string[]> }>;
 const COOKIE = 'tj_session', COOKIE_MAX_AGE = 12 * 60 * 60;
 interface Route { method: string; path: string; re: RegExp; keys: string[]; handler: Handler; auth: 'public' | 'session' }
 
@@ -45,13 +42,14 @@ export function createApp(d: AppDeps): http.RequestListener {
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first (POST /auth/switch-tenant)');
     const ctx = { tenantId: s.activeTenantId, userId: s.userId };
     const row = (await withTenant(d.runtime, ctx, (c) => c.query(
-      `SELECT m.branch_ids,
-              EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.tenant_id = m.tenant_id AND rp.role_id = m.role_id AND rp.permission = $3) AS allowed
-         FROM memberships m WHERE m.tenant_id = $1 AND m.user_id = $2 AND m.active`, [ctx.tenantId, ctx.userId, perm]))).rows[0];
-    if (!row || !row.allowed) throw new HttpError(403, 'FORBIDDEN', `missing permission ${perm}`);
+      `SELECT m.branch_ids, r.name AS role_name,
+              COALESCE((SELECT array_agg(rp.permission) FROM role_permissions rp WHERE rp.tenant_id = m.tenant_id AND rp.role_id = m.role_id), '{}') AS perms
+         FROM memberships m JOIN roles r ON r.tenant_id = m.tenant_id AND r.id = m.role_id
+        WHERE m.tenant_id = $1 AND m.user_id = $2 AND m.active`, [ctx.tenantId, ctx.userId]))).rows[0];
+    if (!row || !row.perms.includes(perm)) throw new HttpError(403, 'FORBIDDEN', `missing permission ${perm}`);
     const branchIds: string[] = row.branch_ids;
     return {
-      ctx, branchIds,
+      ctx: ctx as { tenantId: string; userId: string }, branchIds, permissions: row.perms as string[], roleName: row.role_name as string,
       assertBranch(branchId: string) {
         if (branchIds.length > 0 && !branchIds.includes(branchId)) throw new HttpError(403, 'FORBIDDEN', 'branch not in your scope');
       },
@@ -115,7 +113,7 @@ export function createApp(d: AppDeps): http.RequestListener {
     const row = (await withTenant(d.runtime, { tenantId: s.activeTenantId, userId: s.userId }, (c) => c.query(
       'SELECT id, name, slug, plan_id, settings FROM tenants WHERE id = $1', [s.activeTenantId]))).rows[0];
     if (!row) throw new HttpError(403, 'FORBIDDEN', 'not a member of this tenant');
-    return { body: { id: row.id, name: row.name, slug: row.slug, plan: row.plan_id, activities: row.settings?.activities ?? [] } };
+    return { body: { id: row.id, name: row.name, slug: row.slug, plan: row.plan_id, activities: row.settings?.activities ?? [], company: row.settings?.company ?? {} } };
   });
 
   // ───────────── platform (super admin) ─────────────
@@ -159,10 +157,6 @@ export function createApp(d: AppDeps): http.RequestListener {
     });
     return { status: 201, body: { id: r } };
   });
-  add('GET', '/roles', 'session', async (rc) => {
-    const a = await authorize(rc, 'users.manage');
-    return { body: { roles: (await withTenant(d.runtime, a.ctx, (c) => c.query('SELECT name FROM roles ORDER BY name'))).rows.map((r) => r.name) } };
-  });
   add('GET', '/users', 'session', async (rc) => {
     const a = await authorize(rc, 'users.manage');
     const rows = (await withTenant(d.runtime, a.ctx, (c) => c.query(
@@ -175,13 +169,28 @@ export function createApp(d: AppDeps): http.RequestListener {
     const pwErr = authm.checkPasswordPolicy(rc.body.password);
     if (pwErr) throw bad(pwErr);
     const hash = await authm.hashPassword(rc.body.password);
+    if (rc.body.branchIds !== undefined && !Array.isArray(rc.body.branchIds)) throw bad('branchIds must be an array');
     const branchIds = (rc.body.branchIds ?? []).map((b: unknown) => uuid(b, 'branchIds[]'));
+    if (new Set(branchIds).size !== branchIds.length) throw bad('duplicate branch');
+    // An empty branch_ids array means ALL branches. A scoped staff manager must never grant that scope.
+    if (a.branchIds.length && (!branchIds.length || branchIds.some((bid: string) => !a.branchIds.includes(bid)))) {
+      throw new HttpError(403, 'FORBIDDEN', 'cannot grant branch access outside your own scope');
+    }
+    const roleName = str(rc.body.roleName, 'roleName', 50);
+    if (roleName === 'owner' && a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only an owner can create an owner');
     const id = await withTenant(d.runtime, a.ctx, async (c) => {
-      const role = (await c.query('SELECT id FROM roles WHERE name=$1', [str(rc.body.roleName, 'roleName', 50)])).rows[0];
+      const role = (await c.query('SELECT id FROM roles WHERE name=$1', [roleName])).rows[0];
       if (!role) throw bad('unknown role');
+      // users.manage alone does not grant the ability to create a higher-privilege login.
+      if (a.roleName !== 'owner') {
+        const granted = (await c.query('SELECT permission FROM role_permissions WHERE role_id=$1', [role.id])).rows.map((r) => r.permission as string);
+        if (granted.some((p: string) => !a.permissions.includes(p))) {
+          throw new HttpError(403, 'FORBIDDEN', 'cannot assign more permissions than you hold');
+        }
+      }
       if (branchIds.length) {
         const ok = (await c.query('SELECT count(*)::int n FROM branches WHERE id = ANY($1::uuid[])', [branchIds])).rows[0].n;
-        if (ok !== new Set(branchIds).size) throw bad('unknown branch');
+        if (ok !== branchIds.length) throw bad('unknown branch');
       }
       const uid = (await c.query('SELECT auth_create_user($1,$2,$3) AS id', [email(rc.body.email), str(rc.body.name, 'name', 100), hash])).rows[0].id;
       await c.query('INSERT INTO memberships (tenant_id, user_id, role_id, branch_ids) VALUES ($1,$2,$3,$4)', [a.ctx.tenantId, uid, role.id, branchIds]);
@@ -215,7 +224,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   add('GET', '/customers', 'session', async (rc) => {
     const a = await authorize(rc, 'customers.view');
     return { body: { customers: (await withTenant(d.runtime, a.ctx, (c) => c.query(
-      `SELECT c.id, c.name, c.phone, c.credit_limit, COALESCE((SELECT sum(amount) FROM receivable_entries r WHERE r.customer_id=c.id),0) AS balance FROM customers c ORDER BY c.name`))).rows } };
+      `SELECT c.id, c.name, c.phone, c.address, c.notes, c.active, c.credit_limit, COALESCE((SELECT sum(amount) FROM receivable_entries r WHERE r.customer_id=c.id),0) AS balance FROM customers c ORDER BY c.name`))).rows } };
   });
   add('POST', '/customers', 'session', async (rc) => {
     const a = await authorize(rc, 'customers.manage');
@@ -295,6 +304,8 @@ export function createApp(d: AppDeps): http.RequestListener {
               (SELECT COALESCE(sum(amount),0) FROM receivable_entries) AS receivables`))).rows[0];
     return { body: { salesToday: r.sales_today, invoicesToday: r.invoices_today, receivables: r.receivables } };
   });
+
+  registerAdminRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
 
   // ───────────── dispatcher ─────────────
   const clientIp = (req: http.IncomingMessage) =>
