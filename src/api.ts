@@ -11,6 +11,7 @@ import { platformCreateShop } from './tenancy.js';
 import { ACTIVITIES, activityIds } from './templates.js';
 import { serveUi } from './static.js';
 import { registerAdminRoutes } from './admin.js';
+import { registerWorkshopRoutes } from './workshop.js';
 import type { Handler, Rc } from './kit.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
@@ -306,6 +307,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   });
 
   registerAdminRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
+  registerWorkshopRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
 
   // ───────────── dispatcher ─────────────
   const clientIp = (req: http.IncomingMessage) =>
