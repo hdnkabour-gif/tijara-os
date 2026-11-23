@@ -48,20 +48,20 @@ describe('web UI in a real browser', () => {
     const { ctx, page, problems } = await newPage();
     await uiLogin(page, admin.email);
     await page.waitForSelector('.platform-empty');
-    await expect(page.getByRole('heading', { name: /premier établissement/i })).toBeVisible();
-    await expect(page.locator('.overview-strip .v').first()).toHaveText('0');
-    await expect(page.getByRole('button', { name: /créer le premier établissement/i })).toBeVisible();
+    expect(await page.getByRole('heading', { name: /premier établissement/i }).isVisible()).toBe(true);
+    expect((await page.locator('.overview-strip .v').first().innerText()).trim()).toBe('0');
+    expect(await page.getByRole('button', { name: /créer le premier établissement/i }).isVisible()).toBe(true);
     await page.getByRole('button', { name: /créer le premier établissement/i }).click();
     await page.waitForSelector('#sn');
-    await expect(page.locator('#ss')).toBeVisible();
+    expect(await page.locator('#ss').isVisible()).toBe(true);
     await page.keyboard.press('Escape');
     await ctx.close();
 
     const mobile = await newPage({ mobile: true, locale: 'ar-MA' });
     await uiLogin(mobile.page, admin.email);
     await mobile.page.waitForSelector('.platform-empty');
-    await expect(mobile.page.locator('html')).toHaveAttribute('dir', 'rtl');
-    await expect(mobile.page.locator('.workspace .nav a')).toHaveCount(1);
+    expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
+    expect(await mobile.page.locator('.workspace .nav a').count()).toBe(1);
     const fits = await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     expect(fits).toBe(true);
     expect([...problems, ...mobile.problems]).toEqual([]);
