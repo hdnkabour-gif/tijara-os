@@ -169,13 +169,28 @@ export function createApp(d: AppDeps): http.RequestListener {
     const pwErr = authm.checkPasswordPolicy(rc.body.password);
     if (pwErr) throw bad(pwErr);
     const hash = await authm.hashPassword(rc.body.password);
+    if (rc.body.branchIds !== undefined && !Array.isArray(rc.body.branchIds)) throw bad('branchIds must be an array');
     const branchIds = (rc.body.branchIds ?? []).map((b: unknown) => uuid(b, 'branchIds[]'));
+    if (new Set(branchIds).size !== branchIds.length) throw bad('duplicate branch');
+    // An empty branch_ids array means ALL branches. A scoped staff manager must never grant that scope.
+    if (a.branchIds.length && (!branchIds.length || branchIds.some((bid: string) => !a.branchIds.includes(bid)))) {
+      throw new HttpError(403, 'FORBIDDEN', 'cannot grant branch access outside your own scope');
+    }
+    const roleName = str(rc.body.roleName, 'roleName', 50);
+    if (roleName === 'owner' && a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only an owner can create an owner');
     const id = await withTenant(d.runtime, a.ctx, async (c) => {
-      const role = (await c.query('SELECT id FROM roles WHERE name=$1', [str(rc.body.roleName, 'roleName', 50)])).rows[0];
+      const role = (await c.query('SELECT id FROM roles WHERE name=$1', [roleName])).rows[0];
       if (!role) throw bad('unknown role');
+      // users.manage alone does not grant the ability to create a higher-privilege login.
+      if (a.roleName !== 'owner') {
+        const granted = (await c.query('SELECT permission FROM role_permissions WHERE role_id=$1', [role.id])).rows.map((r) => r.permission as string);
+        if (granted.some((p: string) => !a.permissions.includes(p))) {
+          throw new HttpError(403, 'FORBIDDEN', 'cannot assign more permissions than you hold');
+        }
+      }
       if (branchIds.length) {
         const ok = (await c.query('SELECT count(*)::int n FROM branches WHERE id = ANY($1::uuid[])', [branchIds])).rows[0].n;
-        if (ok !== new Set(branchIds).size) throw bad('unknown branch');
+        if (ok !== branchIds.length) throw bad('unknown branch');
       }
       const uid = (await c.query('SELECT auth_create_user($1,$2,$3) AS id', [email(rc.body.email), str(rc.body.name, 'name', 100), hash])).rows[0].id;
       await c.query('INSERT INTO memberships (tenant_id, user_id, role_id, branch_ids) VALUES ($1,$2,$3,$4)', [a.ctx.tenantId, uid, role.id, branchIds]);
