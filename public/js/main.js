@@ -76,6 +76,22 @@ async function render() {
       try { await api('POST', '/auth/switch-tenant', { tenantId: id }); await boot(); } catch (e) { toast(friendly(e), true); }
     })));
   }
+  if (['suspended','trial_expired'].includes(S.tenant?.status) && !(S.me.isPlatformAdmin && path === 'platform')) {
+    const isAr = getLang() === 'ar';
+    const controls = [h('button', { class: 'btn', type: 'button', onclick: logout }, t('logout'))];
+    if (S.me.isPlatformAdmin) controls.push(h('button',{class:'btn primary',type:'button',onclick:()=>go('platform')},isAr?'إدارة المحلات':'Gestion plateforme'));
+    if (S.me.tenants?.length > 1) controls.push(h('select',{onchange:async(e)=>{
+      try { await api('POST','/auth/switch-tenant',{tenantId:e.target.value}); await boot(); }
+      catch(ex){toast(friendly(ex),true);}
+    }},h('option',{value:''},isAr?'اختر محلاً آخر':'Choisir un autre commerce'),
+       S.me.tenants.filter(v=>v.tenant_id!==S.tenant.id).map(v=>h('option',{value:v.tenant_id},v.name))));
+    root.appendChild(publicShell(h('main',null,h('section',{class:'card',role:'alert'},
+      h('h1',null,S.tenant.status==='trial_expired'?(isAr?'انتهت مدة الباقة التجريبية':'La période d’essai est terminée'):(isAr?'هذا المحل موقوف مؤقتاً':'Ce commerce est temporairement suspendu')),
+      h('p',null,isAr?'بيانات المحل والفواتير والمخزون محفوظة. تواصل مع إدارة المنصة لإعادة التفعيل.':'Les données, factures et le stock sont conservés. Contactez l’administration pour la réactivation.'),
+      S.tenant.statusReason && h('p',{class:'muted'},S.tenant.statusReason),
+      h('div',{class:'row'},controls)))));
+    return;
+  }
   const visible = ROUTES.filter((r) => r.show());
   let current = visible.find((r) => r.path === path);
   if (!current) {
