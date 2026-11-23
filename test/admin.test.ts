@@ -26,6 +26,10 @@ describe('edit / archive / delete (never erase history)', () => {
     expect(got).toMatchObject({ name: 'Renamed', price: '12.5000' });
     expect((await api.call('PATCH', `/items/${used}`, { ...j(A.ownerToken), body: { active: false } })).status).toBe(200);          // archive
     expect((await api.call('GET', '/items', j(A.ownerToken))).json.items.find((i: any) => i.id === used).active).toBe(false);
+    // A stale/mobile POS can still send the old item ID; the API must reject it.
+    const archivedSale = await api.call('POST', '/sales/quick', { ...j(A.ownerToken), headers: { 'idempotency-key': key() },
+      body: { branchId: A.branchId, lines: [{ itemId: used, qty: 1 }], payments: [{ method: 'cash', amount: 12.5 }] } });
+    expect(archivedSale.status).toBe(409);
     const del = await api.call('DELETE', `/items/${used}`, j(A.ownerToken));
     expect(del.status).toBe(409); expect(del.json.error.code).toBe('IN_USE'); expect(JSON.stringify(del.json)).not.toMatch(/violates|constraint/i);
     expect((await api.call('DELETE', `/items/${unused}`, j(A.ownerToken))).status).toBe(200);
@@ -48,6 +52,9 @@ describe('edit / archive / delete (never erase history)', () => {
     expect((await api.call('PATCH', `/customers/${c1}`, { ...j(A.ownerToken), body: { phone: '0600000000', address: 'Rue 1', creditLimit: 800, active: false } })).status).toBe(200);
     const list = (await api.call('GET', '/customers', j(A.ownerToken))).json.customers;
     expect(list.find((c: any) => c.id === c1)).toMatchObject({ phone: '0600000000', active: false, credit_limit: '800.00' });
+    const archivedCredit = await api.call('POST', '/sales/quick', { ...j(A.ownerToken), headers: { 'idempotency-key': key() },
+      body: { branchId: A.branchId, customerId: c1, lines: [{ itemId: it, qty: 1 }], payments: [] } });
+    expect(archivedCredit.status).toBe(409);
     expect((await api.call('DELETE', `/customers/${c1}`, j(A.ownerToken))).json.error.code).toBe('IN_USE');
     expect((await api.call('DELETE', `/customers/${c2}`, j(A.ownerToken))).status).toBe(200);
 
