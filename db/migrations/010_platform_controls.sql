@@ -32,7 +32,8 @@ CREATE TABLE tenant_quotas (
   max_items int CHECK (max_items BETWEEN 1 AND 1000000),
   max_branches int CHECK (max_branches BETWEEN 1 AND 1000),
   max_customers int CHECK (max_customers BETWEEN 1 AND 1000000),
-  max_monthly_orders int CHECK (max_monthly_orders BETWEEN 1 AND 10000000)
+  max_monthly_orders int CHECK (max_monthly_orders BETWEEN 1 AND 10000000),
+  feature_overrides jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(feature_overrides)='object')
 );
 ALTER TABLE tenant_quotas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_quotas FORCE ROW LEVEL SECURITY;
@@ -102,7 +103,7 @@ CREATE TRIGGER trg_order_quota BEFORE INSERT ON sales_orders FOR EACH ROW EXECUT
 -- Administrative setter: callable only by app_platform; SQL checks operator against platform_admins.
 -- Changes status and quotas without deleting or rewriting commercial rows.
 CREATE FUNCTION platform_set_tenant_controls(
-  p_actor uuid,p_tenant uuid,p_plan text,p_status text,p_reason text,p_limits jsonb) RETURNS boolean
+  p_actor uuid,p_tenant uuid,p_plan text,p_status text,p_reason text,p_limits jsonb,p_features jsonb) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE v_before jsonb; v_after jsonb; v_key text; v_int int;
 BEGIN
@@ -116,6 +117,16 @@ BEGIN
     THEN RAISE EXCEPTION 'suspension reason required' USING ERRCODE='22023'; END IF;
   IF p_limits IS NOT NULL AND jsonb_typeof(p_limits)<>'object'
     THEN RAISE EXCEPTION 'limits must be an object' USING ERRCODE='22023'; END IF;
+  IF p_features IS NOT NULL AND jsonb_typeof(p_features)<>'object'
+    THEN RAISE EXCEPTION 'features must be an object' USING ERRCODE='22023'; END IF;
+  IF p_features IS NOT NULL THEN
+    FOR v_key IN SELECT jsonb_object_keys(p_features) LOOP
+      IF v_key NOT IN ('kitchen','workshop','purchases','cash','production','bookings','delivery')
+        THEN RAISE EXCEPTION 'unsupported feature %',v_key USING ERRCODE='22023'; END IF;
+      IF jsonb_typeof(p_features->v_key)<>'boolean'
+        THEN RAISE EXCEPTION 'feature must be boolean' USING ERRCODE='22023'; END IF;
+    END LOOP;
+  END IF;
   IF p_limits IS NOT NULL THEN
     FOR v_key IN SELECT jsonb_object_keys(p_limits) LOOP
       IF v_key NOT IN ('max_users','max_items','max_branches','max_customers','max_monthly_orders') THEN
@@ -141,14 +152,15 @@ BEGIN
                           ELSE status_reason END,
         status_changed_at=CASE WHEN p_status IS NULL THEN status_changed_at ELSE now() END
    WHERE id=p_tenant;
-  IF p_limits IS NOT NULL AND p_limits<>'{}'::jsonb THEN
+  IF (p_limits IS NOT NULL AND p_limits<>'{}'::jsonb) OR p_features IS NOT NULL THEN
     INSERT INTO tenant_quotas (tenant_id) VALUES (p_tenant) ON CONFLICT DO NOTHING;
     UPDATE tenant_quotas SET
       max_users=CASE WHEN p_limits ? 'max_users' THEN (p_limits->>'max_users')::int ELSE max_users END,
       max_items=CASE WHEN p_limits ? 'max_items' THEN (p_limits->>'max_items')::int ELSE max_items END,
       max_branches=CASE WHEN p_limits ? 'max_branches' THEN (p_limits->>'max_branches')::int ELSE max_branches END,
       max_customers=CASE WHEN p_limits ? 'max_customers' THEN (p_limits->>'max_customers')::int ELSE max_customers END,
-      max_monthly_orders=CASE WHEN p_limits ? 'max_monthly_orders' THEN (p_limits->>'max_monthly_orders')::int ELSE max_monthly_orders END
+      max_monthly_orders=CASE WHEN p_limits ? 'max_monthly_orders' THEN (p_limits->>'max_monthly_orders')::int ELSE max_monthly_orders END,
+      feature_overrides=COALESCE(p_features,feature_overrides)
       WHERE tenant_id=p_tenant;
   END IF;
   SELECT jsonb_build_object('plan',t.plan_id,'status',t.status,'reason',t.status_reason,'limits',to_jsonb(q))
@@ -157,13 +169,13 @@ BEGIN
     VALUES(p_actor,'tenant.controls_changed',jsonb_build_object('tenantId',p_tenant,'before',v_before,'after',v_after));
   RETURN true;
 END $$;
-REVOKE ALL ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jsonb) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jsonb) TO app_platform;
+REVOKE ALL ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jsonb,jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform_set_tenant_controls(uuid,uuid,text,text,text,jsonb,jsonb) TO app_platform;
 
 CREATE FUNCTION platform_list_tenant_controls()
 RETURNS TABLE(id uuid,name text,slug text,plan_id text,activities jsonb,status text,status_reason text,
   max_users int,max_items int,max_branches int,max_customers int,max_monthly_orders int,
-  overrides jsonb,features jsonb,users int,items int,branches int,customers int,monthly_orders int,created_at timestamptz)
+  overrides jsonb,features jsonb,feature_overrides jsonb,users int,items int,branches int,customers int,monthly_orders int,created_at timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE r record;
 BEGIN
@@ -172,14 +184,15 @@ BEGIN
            t.created_at tcreated,t.settings->'activities' tactivities,p.features tfeatures,
            COALESCE(q.max_users,p.max_users) ulimit,COALESCE(q.max_items,p.max_items) ilimit,
            COALESCE(q.max_branches,p.max_branches) blimit,COALESCE(q.max_customers,p.max_customers) climit,
-           COALESCE(q.max_monthly_orders,p.max_monthly_orders) olimit,to_jsonb(q) qos
+           COALESCE(q.max_monthly_orders,p.max_monthly_orders) olimit,to_jsonb(q) qos,
+           COALESCE(q.feature_overrides,'{}'::jsonb) tfeature_overrides
       FROM tenants t JOIN plans p ON p.id=t.plan_id LEFT JOIN tenant_quotas q ON q.tenant_id=t.id
       ORDER BY t.created_at DESC
   LOOP
     PERFORM set_config('app.tenant_id',r.tid::text,true);
     RETURN QUERY SELECT r.tid,r.tname,r.tslug,r.tplan,r.tactivities,r.tstatus,r.treason,
         r.ulimit,r.ilimit,r.blimit,r.climit,r.olimit,
-        COALESCE(r.qos,'{}'::jsonb),r.tfeatures,
+        COALESCE(r.qos,'{}'::jsonb),r.tfeatures,r.tfeature_overrides,
         (SELECT count(*)::int FROM memberships m WHERE m.tenant_id=r.tid AND m.active),
         (SELECT count(*)::int FROM items i WHERE i.tenant_id=r.tid),
         (SELECT count(*)::int FROM branches b WHERE b.tenant_id=r.tid),
