@@ -105,8 +105,12 @@ export function registerAdminRoutes(k: Kit) {
     if ([name, roleName, active, branchIds].every((v) => v === undefined)) throw bad('nothing to update');
     const self = id === a.ctx.userId, isOwnerActor = a.roleName === 'owner';
     await withTenant(runtime, a.ctx, async (c) => {
-      const m = (await c.query(`SELECT m.active, r.name AS role_name FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id WHERE m.user_id=$1 FOR UPDATE OF m`, [id])).rows[0];
+      const m = (await c.query(`SELECT m.active, m.branch_ids, r.name AS role_name FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id WHERE m.user_id=$1 FOR UPDATE OF m`, [id])).rows[0];
       if (!m) throw new HttpError(404, 'NOT_FOUND', 'user not found');
+      // A branch-scoped manager cannot alter global-scope or other-branch staff accounts.
+      if (a.branchIds.length && (!m.branch_ids.length || m.branch_ids.some((bid: string) => !a.branchIds.includes(bid)))) {
+        throw new HttpError(403, 'FORBIDDEN', 'member is outside your branch scope');
+      }
       if (self && (roleName !== undefined || active === false)) throw new HttpError(409, 'SELF_LOCKOUT', 'you cannot change your own role or deactivate yourself');
       if ((m.role_name === 'owner' || roleName === 'owner') && !isOwnerActor) throw new HttpError(403, 'FORBIDDEN', 'only an owner can change or assign the owner role');
       // defence in depth: unreachable today (only owners may change owners, and nobody may change themselves) but kept in case those rules are relaxed
@@ -186,6 +190,7 @@ export function registerAdminRoutes(k: Kit) {
   };
   add('POST', '/roles', 'session', async (rc) => {
     const a = await authorize(rc, 'users.manage');
+    if (a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only an owner may manage role definitions');
     const name = str(rc.body.name, 'name', 30).toLowerCase();
     if (!ROLE_NAME.test(name)) throw bad('role name: lowercase letters, digits, underscore (2-30 chars)');
     const perms = checkPerms(a, rc.body.permissions);
@@ -199,6 +204,7 @@ export function registerAdminRoutes(k: Kit) {
   });
   add('PATCH', '/roles/:id', 'session', async (rc) => {
     const a = await authorize(rc, 'users.manage'), id = uuid(rc.params.id, 'id');
+    if (a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only an owner may manage role definitions');
     const perms = rc.body.permissions === undefined ? undefined : checkPerms(a, rc.body.permissions);
     const newName = rc.body.name === undefined ? undefined : str(rc.body.name, 'name', 30).toLowerCase();
     if (perms === undefined && newName === undefined) throw bad('nothing to update');
@@ -221,6 +227,7 @@ export function registerAdminRoutes(k: Kit) {
   });
   add('DELETE', '/roles/:id', 'session', async (rc) => {
     const a = await authorize(rc, 'users.manage'), id = uuid(rc.params.id, 'id');
+    if (a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only an owner may manage role definitions');
     await guardedDelete('this role (it is assigned to team members)', () => withTenant(runtime, a.ctx, async (c) => {
       const r = (await c.query('SELECT name FROM roles WHERE id=$1', [id])).rows[0];
       if (!r) throw new HttpError(404, 'NOT_FOUND', 'role not found');
