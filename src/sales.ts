@@ -64,6 +64,7 @@ export async function createOrder(cc: CommandCtx, p: { branchId: string; custome
   const lineIds: string[] = [];
   for (const l of p.lines) {
     const item = await getItem(cc.client, l.itemId);
+    if (!item.active) throw invalidState('archived items cannot be sold');
     const price = l.unitPrice ?? Number(item.price);
     const r = await cc.client.query(
       `INSERT INTO sales_order_lines (tenant_id, order_id, line_no, item_id, fulfillment, ordered_qty, unit_price,
