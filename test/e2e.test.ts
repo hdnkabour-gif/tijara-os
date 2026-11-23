@@ -60,7 +60,6 @@ describe('web UI in a real browser', () => {
     const mobile = await newPage({ mobile: true, locale: 'ar-MA' });
     await uiLogin(mobile.page, admin.email);
     await mobile.page.waitForSelector('.platform-empty');
-    await mobile.page.getByRole('button', { name: 'Langue' }).click();
     await expect(mobile.page.locator('html')).toHaveAttribute('dir', 'rtl');
     await expect(mobile.page.locator('.workspace .nav a')).toHaveCount(1);
     const fits = await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
