@@ -1,7 +1,8 @@
 import { audit } from './audit.js';
 import { runCommand } from './commands.js';
 import { withTenant } from './db.js';
-import { HttpError, SHOP_TZ, arr, bad, num, optDate, shopToday, optNum, optStr, optUuid, oneOf, str, uuid } from './http.js';
+import { SHOP_TZ, shopToday } from './clock.js';
+import { HttpError, arr, bad, num, optDate, optNum, optStr, optUuid, oneOf, str, uuid } from './http.js';
 import { consumeDirect, receiveStock } from './inventory.js';
 import type { Kit, Authz } from './kit.js';
 import { confirmOrder, createOrder, markReady, payOrder, startPreparation } from './sales.js';

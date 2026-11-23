@@ -3,21 +3,21 @@ import { describe, expect, it } from 'vitest';
 
 // allowed module dependencies (design section 13); enforced mechanically
 const ALLOWED: Record<string, string[]> = {
-  errors: [], db: [], audit: [],
+  errors: [], db: [], audit: [], clock: [],
   auth: [], http: [],
   api: ['auth', 'audit', 'commands', 'catalog', 'db', 'errors', 'inventory', 'tenancy', 'sales', 'http', 'templates', 'static', 'permissions', 'admin', 'grill', 'workshop', 'kit'],
   static: [],
   permissions: [],
   admin: ['audit', 'auth', 'db', 'errors', 'http', 'kit', 'permissions'],
-  grill: ['audit', 'commands', 'db', 'http', 'inventory', 'kit', 'sales'],
-  workshop: ['audit','commands','db','http','kit','sales'],
+  grill: ['audit', 'clock', 'commands', 'db', 'http', 'inventory', 'kit', 'sales'],
+  workshop: ['audit','clock','commands','db','http','kit','sales'],
   kit: ['auth', 'db'],
   server: ['api', 'db'], migrate: ['bootstrap'], bootstrap: [],           // entrypoints: no business-module dependencies
   commands: ['db', 'errors'],
   tenancy: ['db', 'catalog', 'templates'],
   templates: ['catalog'],
   catalog: ['errors'],
-  inventory: ['commands', 'catalog', 'errors'],
+  inventory: ['clock', 'commands', 'catalog', 'errors'],
   production: ['commands', 'catalog', 'inventory', 'errors'],
   approvals: ['audit', 'errors', 'tenancy'],
   payments: ['commands', 'errors'],

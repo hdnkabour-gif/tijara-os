@@ -49,10 +49,6 @@ export const str = (v: unknown, name: string, max = 200): string => {
   return v.trim();
 };
 export const optStr = (v: unknown, name: string, max = 200) => (v == null ? undefined : str(v, name, max));
-/** Shops live on Moroccan local days (UTC+1, UTC+0 during Ramadan: the tz database handles it). */
-export const SHOP_TZ = 'Africa/Casablanca';
-/** Today's calendar day in the shop's timezone, 'YYYY-MM-DD'. */
-export const shopToday = (at: Date = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
 /** Optional calendar date 'YYYY-MM-DD' that really exists (rejects 2026-02-30). Empty string = absent. */
 export const optDate = (v: unknown, name: string): string | null => {
   if (v == null || v === '') return null;

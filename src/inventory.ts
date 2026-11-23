@@ -2,7 +2,7 @@ import type pg from 'pg';
 import type { CommandCtx } from './commands.js';
 import { currentPolicyVersion, getItem, PolicyVersion } from './catalog.js';
 import { conflict, insufficientStock, validation } from './errors.js';
-import { SHOP_TZ } from './http.js';
+import { localMidnight } from './clock.js';
 
 const ZERO = '00000000-0000-0000-0000-000000000000';
 export const r4 = (x: number) => Math.round(x * 1e4) / 1e4;
@@ -78,11 +78,6 @@ export async function availableQty(c: pg.PoolClient, branchId: string, itemId: s
     `SELECT COALESCE(sum(on_hand - reserved),0) AS q FROM stock_balances
       WHERE branch_id=$1 AND item_id=$2 AND stock_status='sellable'`, [branchId, itemId]);
   return Number(r.rows[0].q);
-}
-
-/** The instant a local calendar day begins in the shop's timezone (DST/Ramadan changes come from the tz database). */
-export async function localMidnight(c: pg.PoolClient | pg.Client | pg.Pool, day: string, tz = SHOP_TZ): Promise<Date> {
-  return (await c.query(`SELECT ($1::date::timestamp AT TIME ZONE $2) AS t`, [day, tz])).rows[0].t as Date;
 }
 
 // ───────────── receipt / adjustment ─────────────

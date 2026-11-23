@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { localMidnight } from '../src/inventory.js';
-import { shopToday } from '../src/http.js';
+import { localMidnight, shopToday } from '../src/clock.js';
 import { closeAll, runtime } from './helpers.js';
 
 afterAll(closeAll);
