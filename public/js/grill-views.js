@@ -13,7 +13,7 @@ const dict = {
     transform:'Découpe & transformation', input:'Viande d’origine', output:'Produit transformé', inputQty:'Quantité consommée',
     outputQty:'Quantité obtenue', waste:'Perte / déchets (kg)', convert:'Enregistrer la transformation',
     empty:'Aucune opération à afficher', save:'Valider', cancel:'Annuler', loading:'Actualiser', archived:'Archivé',
-    notProduction:'Choisissez deux produits différents avec la même unité',
+    notProduction:'Choisissez deux produits différents avec la même unité', addLine:'Ajouter un article',
   },
   ar: {
     grill:'المطبخ والمشوي',queue:'طلبات التحضير',create:'إرسال إلى الشواء',label:'رقم الطاولة أو الطلب',
@@ -26,7 +26,7 @@ const dict = {
     transform:'تقطيع وتحويل اللحوم',input:'اللحم الأصلي',output:'المنتج المحوّل',inputQty:'الكمية المستهلكة',
     outputQty:'الكمية المنتَجة',waste:'الفاقد/المخلفات (كلغ)',convert:'تسجيل التحويل',
     empty:'لا توجد عمليات للعرض',save:'تأكيد',cancel:'إلغاء',loading:'تحديث',archived:'مؤرشف',
-    notProduction:'اختر منتجين مختلفين بنفس وحدة القياس',
+    notProduction:'اختر منتجين مختلفين بنفس وحدة القياس', addLine:'إضافة صنف',
   },
 };
 const w=(k)=>dict[getLang()][k]??k;
@@ -37,13 +37,14 @@ const danger=(err)=>{toast(friendly(err),true);};
 const branchDropdown=(S,current,cb)=>h('select',{id:'ops-branch',onchange:(e)=>cb(e.target.value)},
   S.branches.map((b)=>h('option',{value:b.id,selected:b.id===current},b.name)));
 const formModal=(title,inputs,onSubmit)=>{
+  const key=newKey();   // one business command per dialog, reused on retry
   const err=h('div'),submit=h('button',{type:'submit',class:'btn primary'},w('save'));
   let busy=false;
   const m=modal(title,h('form',{onsubmit:async(e)=>{
     e.preventDefault();
     if(busy)return;
     busy=true;submit.disabled=true;
-    try{await onSubmit();m.close();}
+    try{await onSubmit(key);m.close();}
     catch(ex){err.replaceChildren(h('div',{class:'error',role:'alert'},friendly(ex)));}
     finally{busy=false;submit.disabled=false;}
   }},...inputs,err,h('div',{class:'row'},submit,btn(w('cancel'),()=>m.close()))));
@@ -65,9 +66,18 @@ export async function grillView(S){
     const products=activeProducts(items);
     const create=()=> {
       const label=h('input',{id:'grill-label',placeholder:w('label'),maxlength:'60'});
-      const product=itemSelect(products,'grill-item'),qty=numberInput('grill-qty');
-      formModal(w('create'),[...field(w('label'),label,'grill-label'),...field(w('item'),product,'grill-item'),...field(w('qty'),qty,'grill-qty')],async()=>{
-        await api('POST','/grill/orders',{branchId,label:label.value||null,lines:[{itemId:product.value,qty:Number(qty.value)}]},{'idempotency-key':newKey()});
+      const linesBox=h('div',{id:'grill-lines'});
+      const addLine=()=>{
+        const n=linesBox.children.length;
+        const product=itemSelect(products,`grill-item-${n}`),qty=numberInput(`grill-qty-${n}`);
+        const row=h('div',{class:'row grill-line'},h('div',{class:'grow'},product),h('div',null,qty),
+          btn('✕',()=>{ if(linesBox.children.length>1) row.remove(); }));
+        linesBox.appendChild(row);
+      };
+      addLine();
+      formModal(w('create'),[...field(w('label'),label,'grill-label'),h('label',null,w('item')),linesBox,btn('+ '+w('addLine'),addLine)],async(key)=>{
+        const lines=[...linesBox.querySelectorAll('.grill-line')].map(r=>({itemId:r.querySelector('select').value,qty:Number(r.querySelector('input').value)}));
+        await api('POST','/grill/orders',{branchId,label:label.value||null,lines},{'idempotency-key':key});
         toast(w('create'));await render();
       });
     };
@@ -77,8 +87,8 @@ export async function grillView(S){
       if(o.state==='in_preparation'&&S.me.permissions.includes('kitchen.manage'))button.push(btn(w('markReady'),async()=>{try{await api('POST',`/grill/orders/${o.id}/ready`,{}, {'idempotency-key':newKey()});render();}catch(e){danger(e);}},'primary'));
       if(o.state==='ready'&&S.me.permissions.includes('sale.create'))button.push(btn(w('collect'),()=>{
         const method=select('grill-payment',['cash','card','transfer'],p=>h('option',{value:p},w(p)));
-        formModal(w('collect'),[h('p',null,money(o.total)),...field(w('collect'),method,'grill-payment')],async()=>{
-          await api('POST',`/grill/orders/${o.id}/pay`,{payments:[{method:method.value,amount:Number(o.total)}]}, {'idempotency-key':newKey()});
+        formModal(w('collect'),[h('p',null,money(o.total)),...field(w('collect'),method,'grill-payment')],async(key)=>{
+          await api('POST',`/grill/orders/${o.id}/pay`,{payments:[{method:method.value,amount:Number(o.total)}]}, {'idempotency-key':key});
           toast(w('collect'));await render();
         });
       },'primary'));
@@ -111,9 +121,9 @@ export async function suppliersView(S){
       const item=itemSelect(productList,'purchase-item'),qty=numberInput('purchase-qty'),unitCost=numberInput('purchase-cost','0','0.0001');
       const reference=h('input',{id:'purchase-ref'});
       formModal(w('newSupply'),[...field(w('supplier'),supplier,'purchase-supplier'),...field(w('reference'),reference,'purchase-ref'),
-        ...field(w('item'),item,'purchase-item'),...field(w('qty'),qty,'purchase-qty'),...field(w('cost'),unitCost,'purchase-cost')],async()=>{
+        ...field(w('item'),item,'purchase-item'),...field(w('qty'),qty,'purchase-qty'),...field(w('cost'),unitCost,'purchase-cost')],async(key)=>{
           await api('POST','/purchase-receipts',{branchId,supplierId:supplier.value,reference:reference.value||null,
-            lines:[{itemId:item.value,qty:Number(qty.value),unitCost:Number(unitCost.value)}]}, {'idempotency-key':newKey()});
+            lines:[{itemId:item.value,qty:Number(qty.value),unitCost:Number(unitCost.value)}]}, {'idempotency-key':key});
           toast(w('received'));await render();
         });
     };
@@ -167,11 +177,11 @@ export async function transformsView(S){
       const input=itemSelect(products,'prod-input'),output=itemSelect(products,'prod-output'),
         inputQty=numberInput('prod-inqty','1'),outputQty=numberInput('prod-outqty','0.95'),wasteQty=numberInput('prod-waste','0.05');
       formModal(w('transform'),[...field(w('input'),input,'prod-input'),...field(w('inputQty'),inputQty,'prod-inqty'),
-        ...field(w('output'),output,'prod-output'),...field(w('outputQty'),outputQty,'prod-outqty'),...field(w('waste'),wasteQty,'prod-waste')],async()=>{
+        ...field(w('output'),output,'prod-output'),...field(w('outputQty'),outputQty,'prod-outqty'),...field(w('waste'),wasteQty,'prod-waste')],async(key)=>{
           if(input.value===output.value){toast(w('notProduction'),true);return;}
           await api('POST','/production/transforms',{branchId,inputItemId:input.value,outputItemId:output.value,
             inputQty:Number(inputQty.value),outputQty:Number(outputQty.value),wasteQty:Number(wasteQty.value)},
-            {'idempotency-key':newKey()});
+            {'idempotency-key':key});
           toast(w('convert'));await render();
         });
     };

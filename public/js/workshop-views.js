@@ -11,7 +11,7 @@ const lang = {
     approve:'Approuver le devis',start:'Commencer',complete:'Terminer',deliver:'Livrer et facturer',
     cancel:'Annuler le devis',reason:'Motif',choose:'Choisir…',cash:'Espèces',card:'Carte',transfer:'Virement',credit:'Crédit client',
     reminders:'Entretiens à prévoir',due:'À rappeler',noData:'Aucun enregistrement',save:'Enregistrer',
-    close:'Annuler',invalid:'Veuillez renseigner les champs requis',sent:'Enregistré',noAccess:'Droits insuffisants',
+    close:'Annuler',invalid:'Veuillez renseigner les champs requis',sent:'Enregistré',noAccess:'Droits insuffisants',addLine:'Ajouter une ligne',
   },
   ar:{
     vehicles:'السيارات',register:'إضافة سيارة',plate:'رقم التسجيل',make:'الماركة',model:'الموديل',vin:'رقم الهيكل',
@@ -22,7 +22,7 @@ const lang = {
     approve:'الموافقة على عرض السعر',start:'بدء الإصلاح',complete:'إنهاء الإصلاح',deliver:'تسليم وفوترة',
     cancel:'إلغاء الطلب',reason:'السبب',choose:'اختر…',cash:'نقداً',card:'بطاقة',transfer:'تحويل',credit:'دين الزبون',
     reminders:'الصيانة المستحقة',due:'يجب التذكير',noData:'لا توجد بيانات',save:'حفظ',
-    close:'إلغاء',invalid:'المرجو ملء الحقول',sent:'تم الحفظ',noAccess:'لا توجد صلاحيات',
+    close:'إلغاء',invalid:'المرجو ملء الحقول',sent:'تم الحفظ',noAccess:'لا توجد صلاحيات',addLine:'إضافة سطر',
   },
 };
 const w=(s)=>lang[getLang()][s]??s;
@@ -35,13 +35,14 @@ const number=(id,initial='0',step='1')=>val(id,initial,'number',{min:'0',step,re
 const title=(text,action)=>h('div',{class:'row'},h('h1',{class:'grow'},text),action);
 const error=(ex)=>toast(friendly(ex),true);
 const formModal=(heading,fields,onSave)=>{
+  const key=newKey();   // one business command per dialog, reused on retry
   const err=h('div'),submit=h('button',{type:'submit',class:'btn primary'},w('save'));
   let busy=false;
   const m=modal(heading,h('form',{onsubmit:async(e)=>{
     e.preventDefault();
     if(busy)return;
     busy=true;submit.disabled=true;
-    try{await onSave();m.close();}catch(ex){err.replaceChildren(h('div',{class:'error',role:'alert'},friendly(ex)));}
+    try{await onSave(key);m.close();}catch(ex){err.replaceChildren(h('div',{class:'error',role:'alert'},friendly(ex)));}
     finally{busy=false;submit.disabled=false;}
   }},...fields,err,h('div',{class:'row'},submit,btn(w('close'),()=>m.close()))));
   return m;
@@ -86,23 +87,30 @@ export async function workshopView(S){
     const canSale=S.me.permissions.includes('sale.create');
     const quote=()=>{
       const vehicle=select('wo-vehicle',vehicles.map(v=>opt(v.id,`${v.plate} · ${v.model}`)));
-      const part=select('wo-item',products.map(i=>opt(i.id,`${i.name} · ${money(i.price)}`)));
-      const services=products.filter(i=>i.kind==='service');
-      const labour=select('wo-labour',[opt('',w('choose')),...services.map(i=>opt(i.id,i.name))]);
-      const qty=number('wo-qty','1','0.0001'),km=number('wo-km',String(vehicles[0]?.odometer_km??0)),
-        warranty=number('wo-warranty','30'),nextDate=val('wo-next-date','','date'),
-        nextKm=number('wo-next-km','0'),notes=h('textarea',{id:'wo-notes',rows:3});
-      formModal(w('newQuote'),[...field(w('plate'),vehicle,'wo-vehicle'),...field(w('item'),part,'wo-item'),
-        ...field(w('qty'),qty,'wo-qty'),...field(w('service'),labour,'wo-labour'),
+      const km=number('wo-km',String(vehicles[0]?.odometer_km??0));
+      vehicle.addEventListener('change',()=>{ const v=vehicles.find(x=>x.id===vehicle.value); km.value=String(v?.odometer_km??0); });
+      const linesBox=h('div',{id:'wo-lines'});
+      const addLine=()=>{
+        const n=linesBox.children.length;
+        const part=select(`wo-item-${n}`,products.map(i=>opt(i.id,`${i.name} · ${money(i.price)}`)));
+        const qty=number(`wo-qty-${n}`,'1','0.0001');
+        const row=h('div',{class:'row wo-line','data-line':String(n)},h('div',{class:'grow'},part),h('div',null,qty),
+          btn('✕',()=>{ if(linesBox.children.length>1) row.remove(); },''));
+        linesBox.appendChild(row);
+      };
+      addLine();
+      const warranty=number('wo-warranty','30'),nextDate=val('wo-next-date','','date'),
+        nextKm=val('wo-next-km','','number',{min:'0',step:'1'}),notes=h('textarea',{id:'wo-notes',rows:3});
+      formModal(w('newQuote'),[...field(w('plate'),vehicle,'wo-vehicle'),
+        h('label',null,w('item')),linesBox,btn('+ '+w('addLine'),addLine,'',),
         ...field(w('mileage'),km,'wo-km'),...field(w('issue'),notes,'wo-notes'),
         ...field(w('warranty'),warranty,'wo-warranty'),...field(w('nextDate'),nextDate,'wo-next-date'),
-        ...field(w('nextKm'),nextKm,'wo-next-km')],async()=>{
-          const lines=[{itemId:part.value,qty:Number(qty.value)}];
-          if(labour.value&&labour.value!==part.value)lines.push({itemId:labour.value,qty:1});
+        ...field(w('nextKm'),nextKm,'wo-next-km')],async(key)=>{
+          const lines=[...linesBox.querySelectorAll('.wo-line')].map(r=>({itemId:r.querySelector('select').value,qty:Number(r.querySelector('input').value)}));
           await api('POST','/workshop/orders',{branchId,vehicleId:vehicle.value,mileageAtVisit:Number(km.value),
             warrantyDays:Number(warranty.value),note:notes.value||null,
             nextServiceDate:nextDate.value||null,nextServiceKm:nextKm.value?Number(nextKm.value):null,lines},
-            {'idempotency-key':newKey()});
+            {'idempotency-key':key});
           toast(w('sent'));await render();
         });
     };
@@ -112,16 +120,16 @@ export async function workshopView(S){
     };
     const payDialog=(o)=>{
       const method=select('wo-payment',['cash','card','transfer','credit'].map(m=>opt(m,w(m))));
-      formModal(w('deliver'),[h('p',null,money(o.quote_total)),...field(w('deliver'),method,'wo-payment')],async()=>{
+      formModal(w('deliver'),[h('p',null,money(o.quote_total)),...field(w('deliver'),method,'wo-payment')],async(key)=>{
         const payments=method.value==='credit'?[]:[{method:method.value,amount:Number(o.quote_total)}];
-        await api('POST',`/workshop/orders/${o.id}/deliver`,{payments},{'idempotency-key':newKey()});
+        await api('POST',`/workshop/orders/${o.id}/deliver`,{payments},{'idempotency-key':key});
         toast(w('sent'));await render();
       });
     };
     const cancelDialog=(o)=>{
       const reason=val('cancel-repair-reason');
-      formModal(w('cancel'),[...field(w('reason'),reason,'cancel-repair-reason')],async()=>{
-        await api('POST',`/workshop/orders/${o.id}/cancel`,{reason:reason.value},{'idempotency-key':newKey()});
+      formModal(w('cancel'),[...field(w('reason'),reason,'cancel-repair-reason')],async(key)=>{
+        await api('POST',`/workshop/orders/${o.id}/cancel`,{reason:reason.value},{'idempotency-key':key});
         toast(w('cancel'));await render();
       });
     };
