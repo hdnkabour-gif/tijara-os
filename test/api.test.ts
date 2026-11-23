@@ -120,6 +120,34 @@ describe('authorization and isolation over HTTP', () => {
     expect((await api.call('GET', '/items')).status).toBe(401);
   });
 
+  it('A7b: platform admin may own pilot shop using their current account; no duplicate user or password is required', async () => {
+    const slug = uniq('pilot').toLowerCase();
+    const countBefore = (await owner.query('SELECT count(*)::int AS n FROM users WHERE id=$1', [admin.id])).rows[0].n;
+    const created = await api.call('POST', '/platform/tenants', { token: admin.token,
+      body: { name: 'Pilot grill', slug, plan: 'pro', activities: ['butcher', 'grill', 'restaurant'], owner: { self: true } } });
+    expect(created.status).toBe(201);
+    expect(created.json.ownerUserId).toBe(admin.id);
+    expect((await owner.query('SELECT count(*)::int AS n FROM users WHERE id=$1', [admin.id])).rows[0].n).toBe(countBefore);
+    const switched = await api.call('POST', '/auth/switch-tenant', { token: admin.token, body: { tenantId: created.json.tenantId } });
+    expect(switched.status).toBe(200);
+    const me = await api.call('GET', '/me', { token: admin.token });
+    expect(me.json.isPlatformAdmin).toBe(true);
+    expect(me.json.activeTenantId).toBe(created.json.tenantId);
+    expect(me.json.permissions).toContain('sale.create');
+    const items = await api.call('GET', '/items', { token: admin.token });
+    expect(items.status).toBe(200);
+    expect(items.json.items.map((x: any) => x.sku)).toContain('BUT-BOEUF');
+    expect(items.json.items.map((x: any) => x.sku)).not.toContain('EQP-POMPE');
+
+    const invalid = await api.call('POST', '/platform/tenants', { token: admin.token,
+      body: { name: 'Bad pilot', slug: uniq('bad').toLowerCase(), plan: 'pro', owner: { self: true, password: PW } } });
+    expect(invalid.status).toBe(400);
+    const nonAdmin = await createShop(api, admin);
+    const denied = await api.call('POST', '/platform/tenants', { token: nonAdmin.ownerToken,
+      body: { name: 'Denied pilot', slug: uniq('denied').toLowerCase(), plan: 'pro', owner: { self: true } } });
+    expect(denied.status).toBe(403);
+  });
+
   it('A8: a user of shop A can never read or touch shop B (ids, tenant switching, login, stock)', async () => {
     const A = await createShop(api, admin, 'pro', 'A'), B = await createShop(api, admin, 'pro', 'B');
     const mk = async (s: Shop, sku: string) => (await api.call('POST', '/items', { token: s.ownerToken, body: { sku, name: sku, kind: 'goods', trackQuantity: true, fulfillment: 'stock', baseUom: 'kg', price: 10 } })).json.id as string;
