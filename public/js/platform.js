@@ -104,6 +104,19 @@ function openControls(shop,plans,done){
       placeholder:String(shop[key]??''),value:override==null?'':String(override)});
     return {key,label,input};
   });
+  const modules=[
+    ['kitchen',txt('Cuisine / grill','المطبخ والمشوي')],['workshop',txt('Atelier mécanique','ورشة الميكانيك')],
+    ['purchases',txt('Achats / fournisseurs','المشتريات والموردون')],['cash',txt('Clôture de caisse','إغلاق الصندوق')],
+    ['production',txt('Transformation','تحويل اللحوم')],['bookings',txt('Commandes / réservations','الطلبات والحجوزات')],
+    ['delivery',txt('Livraison','التوصيل')]
+  ].map(([key,label])=>{
+    const v=shop.feature_overrides?.[key];
+    const input=h('select',{id:'feature-'+key},
+      h('option',{value:'inherit',selected:typeof v!=='boolean'},txt('Selon le forfait','حسب الباقة')),
+      h('option',{value:'on',selected:v===true},txt('Activé','مفعّل')),
+      h('option',{value:'off',selected:v===false},txt('Désactivé','معطّل')));
+    return {key,label,input};
+  });
   const error=h('div');
   const submit=h('button',{class:'btn primary',type:'submit'},txt('Enregistrer','حفظ'));
   const form=h('form',{onsubmit:async(e)=>{
@@ -118,8 +131,12 @@ function openControls(shop,plans,done){
       }
       if(status.value==='suspended'&&!reason.value.trim())
         throw new Error(txt('Précisez le motif de suspension','أدخل سبب إيقاف المحل'));
+      const features={};
+      for(const f of modules){
+        if(f.input.value!=='inherit')features[f.key]=f.input.value==='on';
+      }
       await api('PATCH',`/platform/tenants/${shop.id}/controls`,{
-        plan:plan.value,status:status.value,reason:status.value==='suspended'?reason.value.trim():undefined,limits
+        plan:plan.value,status:status.value,reason:status.value==='suspended'?reason.value.trim():undefined,limits,features
       });
       toast(txt('Modifications enregistrées','تم حفظ التغييرات'));m.close();done();
     }catch(ex){
@@ -133,6 +150,9 @@ function openControls(shop,plans,done){
     h('h3',null,txt('Limites personnalisées','الحدود الخاصة بالمحل')),
     h('p',{class:'muted'},txt('Laisser vide pour appliquer la limite du forfait. Réduire une limite ne supprime aucune donnée.','اتركه فارغاً لتطبيق حد الباقة. تقليل الحد لا يحذف البيانات.')),
     fields.map(f=>h('div',null,...field(f.label,f.input,'limit-'+f.key))),
+    h('h3',null,txt('Modules et autorisations','الوحدات والصلاحيات')),
+    h('p',{class:'muted'},txt('Les droits des employés restent gérés dans chaque commerce. Ici, vous activez ou bloquez les modules.','صلاحيات الموظفين يديرها صاحب المحل؛ هنا تفعل أو تعطل الوحدات.')),
+    modules.map(f=>h('div',null,...field(f.label,f.input,'feature-'+f.key))),
     error,h('div',{class:'row'},submit,h('button',{type:'button',class:'btn',onclick:()=>m.close()},t('cancel'))));
   const m=modal(header,form);
 }
