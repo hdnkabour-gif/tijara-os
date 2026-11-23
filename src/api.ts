@@ -125,14 +125,21 @@ export function createApp(d: AppDeps): http.RequestListener {
   });
   add('POST', '/platform/tenants', 'session', async (rc) => {
     if (!rc.session!.isPlatformAdmin) throw new HttpError(403, 'FORBIDDEN', 'platform administrators only');
-    const o = rc.body, pwErr = authm.checkPasswordPolicy(o.owner?.password);
-    if (pwErr) throw bad(pwErr);
+    const o = rc.body;
+    const selfOwner = o.owner?.self === true;
+    if (selfOwner && Object.keys(o.owner).some((key) => key !== 'self')) throw bad('self ownership cannot specify other owner credentials');
+    if (!selfOwner) {
+      const pwErr = authm.checkPasswordPolicy(o.owner?.password);
+      if (pwErr) throw bad(pwErr);
+    }
     const slug = str(o.slug, 'slug', 40).toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(slug)) throw bad('slug must be lowercase letters, digits, dashes');
     const t = await platformCreateShop(d.platform, d.runtime, rc.session!.userId, {
       name: str(o.name, 'name'), slug, plan: oneOf(o.plan, 'plan', ['basic', 'pro']),
       activities: (o.activities == null ? [] : arr(o.activities, 'activities', 10)).map((a: unknown) => oneOf(a, 'activities[]', activityIds as readonly string[])),
-      owner: { email: email(o.owner?.email), name: str(o.owner?.name, 'owner.name'), passwordHash: await authm.hashPassword(o.owner.password) },
+      owner: selfOwner
+        ? { existingUserId: rc.session!.userId }
+        : { email: email(o.owner?.email), name: str(o.owner?.name, 'owner.name'), passwordHash: await authm.hashPassword(o.owner.password) },
     });
     return { status: 201, body: { tenantId: t.tenantId, branchId: t.branchId, ownerUserId: t.ownerId } };
   });
