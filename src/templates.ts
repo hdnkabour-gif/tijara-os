@@ -12,7 +12,9 @@ const service = (sku: string, name: string, price: number): ItemDef =>
 export const ACTIVITIES: ActivityTemplate[] = [
   { id: 'butcher', label: { ar: 'جزارة', fr: 'Boucherie' }, items: [
     kg('BUT-BOEUF', 'Viande de bœuf', 120, { batchTracking: 'optional' }), kg('BUT-AGNEAU', 'Viande d’agneau', 140, { batchTracking: 'optional' }),
-    kg('BUT-POULET', 'Poulet', 35), kg('BUT-KEFTA', 'Kefta', 110) ] },
+    kg('BUT-POULET', 'Poulet', 35), kg('BUT-KEFTA', 'Kefta', 110),
+    kg('BUT-DINDE', 'Dinde (escalope)', 75), kg('BUT-COTELETTE', 'Côtelettes d’agneau', 150), kg('BUT-FOIE', 'Foie de veau', 160),
+    kg('BUT-KRAIN', 'Kraïn (pieds de veau)', 60), kg('BUT-TQALIA', 'Tqalia (abats)', 90) ] },
   { id: 'grill', label: { ar: 'مشوي', fr: 'Grillades' }, items: [ service('GRL-CUISSON', 'Cuisson grillade (par kg)', 20), unit('GRL-BROCH', 'Brochette', 12, { trackQuantity: false, fulfillment: 'none' }) ] },
   { id: 'restaurant', label: { ar: 'مطعم', fr: 'Restaurant' }, items: [
     unit('RES-PLAT', 'Plat du jour', 60, { trackQuantity: false, fulfillment: 'none' }), unit('RES-BOISSON', 'Boisson', 10, { trackQuantity: false, fulfillment: 'none' }) ] },

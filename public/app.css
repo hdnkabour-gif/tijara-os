@@ -277,3 +277,13 @@ input[type=color]{width:72px;padding:.2rem}
 .option-group .chip{display:inline-flex;align-items:center;gap:.35rem;margin:.2rem}.option-group input{width:auto;min-height:auto}
 .option-choice select{width:auto;max-width:100%}
 .kitchen-note{font-weight:700;color:#b45309}
+/* D2 owner menu page */
+.hours-row{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem .8rem;margin:.3rem 0}.hours-row strong{min-width:5.5rem}
+.hours-range{display:inline-flex;align-items:center;gap:.25rem}.hours-range input{width:auto;min-width:0}
+.qr-grid{display:flex;flex-wrap:wrap;gap:1rem}.qr{margin:0;text-align:center}.qr img{display:block;background:#fff;border:1px solid var(--line);border-radius:12px;max-width:100%;height:auto}
+.mini-thumb{width:56px;height:42px;object-fit:cover;border-radius:8px;display:block}
+#dc-media{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:.6rem;margin:.4rem 0}
+.media-tile{border:1px solid var(--line);border-radius:12px;padding:.4rem;display:flex;flex-direction:column;gap:.3rem}
+.media-tile img,.media-tile video{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;background:#f3ede4}
+.media-tile .btn{min-height:36px;padding:0 .5rem;font-size:.8rem}
+.portion-in{width:7rem}

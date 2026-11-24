@@ -17,14 +17,17 @@ import { registerWorkshopRoutes } from './workshop.js';
 import { registerControlRoutes } from './control.js';
 import { registerSupportRoutes } from './support.js';
 import { registerOrderRoutes } from './orders.js';
+import { registerMenuRoutes } from './menu.js';
+import { registerPublicRoutes } from './public.js';
+import { mediaStoreFromEnv, type MediaStore } from './mediastore.js';
 import type { Handler, Rc } from './kit.js';
 import { cancelOrder, quickSale } from './sales.js';
-import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
+import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, readRaw, send, str, uuid } from './http.js';
 
-export interface AppDeps { runtime: pg.Pool; platform: pg.Pool; production: boolean; trustProxy?: boolean; version?: string; expectedMigrations?: string[]; uiRoot?: string }
+export interface AppDeps { runtime: pg.Pool; platform: pg.Pool; production: boolean; trustProxy?: boolean; version?: string; expectedMigrations?: string[]; uiRoot?: string; media?: MediaStore }
 
 const COOKIE = 'tj_session', COOKIE_MAX_AGE = 12 * 60 * 60;
-interface Route { method: string; path: string; re: RegExp; keys: string[]; handler: Handler; auth: 'public' | 'session' }
+interface Route { method: string; path: string; re: RegExp; keys: string[]; handler: Handler; auth: 'public' | 'session'; raw?: number }
 
 const KINDS = ['goods', 'service', 'composite'] as const;
 const FULFILL = ['stock', 'backflush', 'none'] as const;
@@ -33,11 +36,12 @@ const METHODS = ['cash', 'card', 'transfer'] as const;
 
 export function createApp(d: AppDeps): http.RequestListener {
   const routes: Route[] = [];
-  const add = (method: string, path: string, auth: 'public' | 'session', handler: Handler) => {
+  const add = (method: string, path: string, auth: 'public' | 'session', handler: Handler, opts: { raw?: number } = {}) => {
     const keys: string[] = [];
     const re = new RegExp('^' + path.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
-    routes.push({ method, path, re, keys, handler, auth });
+    routes.push({ method, path, re, keys, handler, auth, raw: opts.raw });
   };
+  const media = d.media ?? mediaStoreFromEnv(d.production);
   const cookieHeader = (value: string, maxAge: number) =>
     `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${d.production ? '; Secure' : ''}`;
   const loginByIp = new RateLimiter(30, 15 * 60_000), loginByEmail = new RateLimiter(10, 15 * 60_000), forgotByIp = new RateLimiter(10, 15 * 60_000);
@@ -198,7 +202,7 @@ export function createApp(d: AppDeps): http.RequestListener {
     let features: Record<string,boolean>|null = null;
     if (b.features !== undefined) {
       if (!b.features || typeof b.features!=='object' || Array.isArray(b.features)) throw bad('features must be an object');
-      const allowed = ['kitchen','workshop','purchases','cash','production','bookings','delivery'];
+      const allowed = ['kitchen','workshop','purchases','cash','production','bookings','delivery','online'];
       features={};
       for (const [key,value] of Object.entries(b.features)) {
         if (!allowed.includes(key)||typeof value!=='boolean') throw bad('invalid feature override');
@@ -408,12 +412,14 @@ export function createApp(d: AppDeps): http.RequestListener {
     return { body: { salesToday: r.sales_today, invoicesToday: r.invoices_today, receivables: r.receivables } };
   });
 
-  registerAdminRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
-  registerGrillRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
-  registerWorkshopRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
-  registerControlRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform }, { version: d.version ?? 'dev', expectedMigrations: d.expectedMigrations });
-  registerSupportRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
-  registerOrderRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
+  registerAdminRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production });
+  registerGrillRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production });
+  registerWorkshopRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production });
+  registerControlRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production }, { version: d.version ?? 'dev', expectedMigrations: d.expectedMigrations });
+  registerSupportRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production });
+  registerOrderRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production });
+  registerMenuRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production });
+  registerPublicRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform, media, production: d.production });
 
   // ───────────── dispatcher ─────────────
   const clientIp = (req: http.IncomingMessage) =>
@@ -469,7 +475,8 @@ export function createApp(d: AppDeps): http.RequestListener {
         break;
       }
       if (!matched) return send(res, pathExists ? 405 : 404, { error: { code: pathExists ? 'METHOD_NOT_ALLOWED' : 'NOT_FOUND', message: 'not found' } });
-      const body = await readJson(req);
+      // uploads (photos/videos) are read raw with the route's own limit; everything else is bounded JSON
+      const body = matched.r.raw ? await readRaw(req, matched.r.raw) : await readJson(req);
       const auth = String(req.headers.authorization ?? '');
       let token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
       let viaCookie = false;

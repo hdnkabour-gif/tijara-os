@@ -9,6 +9,7 @@ import { vehiclesView, workshopView, workshopRemindersView } from './workshop-vi
 import { applyBranding, overviewView, planView, platformAuditView, shop360View, shopsView } from './control-views.js';
 import { supportBanner, supportRequestLabel } from './support-views.js';
 import { ordersView } from './orders-views.js';
+import { menuView } from './menu-views.js';
 
 const root = document.getElementById('app');
 const S = { me: null, tenant: null, branches: [], branding: null, pendingSupport: 0, route: '' };
@@ -21,6 +22,7 @@ const ROUTES = [
   { path: 'dashboard', label: 'nav_dashboard', show: () => can('report.view'), view: dashboardView },
   { path: 'pos', label: 'nav_pos', show: () => can('sale.create'), view: posView },
   { path: 'orders', label: 'nav_orders', show: () => can('orders.view'), view: ordersView },
+  { path: 'menu', label: 'nav_menu', show: () => can('catalog.view') && !S.me?.support, view: menuView },
   { path: 'items', label: 'nav_items', show: () => can('catalog.view'), view: itemsView },
   { path: 'stock', label: 'nav_stock', show: () => can('stock.view'), view: stockView },
   { path: 'customers', label: 'nav_customers', show: () => can('customers.view'), view: customersView },

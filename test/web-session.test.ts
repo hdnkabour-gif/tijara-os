@@ -49,7 +49,7 @@ describe('shop setup by activity and platform overview', () => {
   it('W4: choosing activities seeds an editable starter catalog; unknown activities are refused; only platform admins list shops', async () => {
     const shop = await createShop(api, admin, 'pro', 'Multi', ['butcher', 'grill', 'restaurant']);
     const items = (await api.call('GET', '/items', { token: shop.ownerToken })).json.items;
-    expect(items.map((i: any) => i.sku).sort()).toEqual(['BUT-AGNEAU', 'BUT-BOEUF', 'BUT-KEFTA', 'BUT-POULET', 'GRL-BROCH', 'GRL-CUISSON', 'RES-BOISSON', 'RES-PLAT']);
+    expect(items.map((i: any) => i.sku).sort()).toEqual(['BUT-AGNEAU', 'BUT-BOEUF', 'BUT-COTELETTE', 'BUT-DINDE', 'BUT-FOIE', 'BUT-KEFTA', 'BUT-KRAIN', 'BUT-POULET', 'BUT-TQALIA', 'GRL-BROCH', 'GRL-CUISSON', 'RES-BOISSON', 'RES-PLAT']);
     expect(items.find((i: any) => i.sku === 'GRL-CUISSON')).toMatchObject({ kind: 'service', track_quantity: false });
     expect((await api.call('GET', '/tenant', { token: shop.ownerToken })).json).toMatchObject({ name: 'Multi', plan: 'pro', activities: ['butcher', 'grill', 'restaurant'] });
     const bad = await api.call('POST', '/platform/tenants', { token: admin.token, body: { name: 'X', slug: 'bad-activity', plan: 'pro', activities: ['nuclear'], owner: { email: 'q@test.local', name: 'q', password: PW } } });
@@ -57,7 +57,7 @@ describe('shop setup by activity and platform overview', () => {
     const list = await api.call('GET', '/platform/tenants', { token: admin.token });
     expect(list.status).toBe(200);
     const row = list.json.tenants.find((t: any) => t.id === shop.tenantId);
-    expect(row).toMatchObject({ name: 'Multi', activities: ['butcher', 'grill', 'restaurant'], items: 8, users: 1 });
+    expect(row).toMatchObject({ name: 'Multi', activities: ['butcher', 'grill', 'restaurant'], items: 13, users: 1 });
     expect(JSON.stringify(list.json)).not.toMatch(/password|email/i);                 // overview exposes no business or personal data
     expect((await api.call('GET', '/platform/tenants', { token: shop.ownerToken })).status).toBe(403);
     // a sample sale works immediately on the starter catalog (receive + sell)
