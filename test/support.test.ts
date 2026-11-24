@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Api, createShop, key, platformAdmin, staff, startApp } from './api-helpers.js';
-import { owner } from './helpers.js';
+import { owner, platform } from './helpers.js';
 
 let api:Api, admin:{token:string,id:string};
 beforeAll(async()=>{api=await startApp();admin=await platformAdmin(api);});
@@ -17,7 +17,7 @@ describe('PR-C support access with the owner\'s explicit consent',()=>{
     const r=await ask(admin.token,A.tenantId,{reason,minutes:60,scope:'view'});
     expect(r.status).toBe(201);
     expect((await enter(admin.token,A.tenantId,r.json.id)).status).toBe(403);          // asked, not approved
-    expect((await api.call('GET','/items',as(admin.token))).status).toBe(400);           // still no shop
+    expect((await api.call('GET','/items',as(admin.token))).status).toBe(403);           // platform identity
     // validation and one waiting request at a time
     expect((await ask(admin.token,A.tenantId,{reason:'help',minutes:60})).status).toBe(400);
     expect((await ask(admin.token,A.tenantId,{reason,minutes:5000})).status).toBe(400);
@@ -45,10 +45,11 @@ describe('PR-C support access with the owner\'s explicit consent',()=>{
     const me=(await api.call('GET','/me',as(admin.token))).json;
     expect(me.activeTenantId).toBe(A.tenantId);
     expect(me.support).toMatchObject({id:req,scope:'view'});
-    expect(me.permissions).toContain('catalog.view');
+    expect(me.permissions).toEqual([]);
     expect(me.permissions).not.toContain('sale.create');
-    expect((await api.call('GET','/items',as(admin.token))).status).toBe(200);
-    expect((await api.call('GET','/customers',as(admin.token))).status).toBe(200);
+    expect((await api.call('GET','/support/diagnostics',as(admin.token))).json).toEqual({tenantId:A.tenantId,plan:'pro',status:'active'});
+    expect((await api.call('GET','/items',as(admin.token))).status).toBe(403);
+    expect((await api.call('GET','/customers',as(admin.token))).status).toBe(403);
     // view scope: nothing can be changed, sold or received
     expect((await api.call('POST','/customers',{token:admin.token,body:{name:'x'}})).status).toBe(403);
     expect((await api.call('PATCH','/tenant',{token:admin.token,body:{name:'Hacked'}})).status).toBe(403);
@@ -59,12 +60,12 @@ describe('PR-C support access with the owner\'s explicit consent',()=>{
     const actions=journal.map((e:any)=>e.action);
     expect(actions).toEqual(expect.arrayContaining(['support.requested','support.approved','support.entered','support.request']));
     // EVERY request is journaled, including handlers that do not use the permission helper (/me, /tenant)
-    expect((await api.call('GET','/tenant',as(admin.token))).status).toBe(200);
+    expect((await api.call('GET','/tenant',as(admin.token))).status).toBe(403);
     const paths=(await api.call('GET',`/audit?refId=${req}`,as(A.ownerToken))).json.entries.filter((e:any)=>e.action==='support.request').map((e:any)=>e.meta.path);
     expect(paths).toEqual(expect.arrayContaining(['/me','/items','/customers','/sales/quick','/tenant']));
     // revocation takes effect on the very next request
     expect((await api.call('POST',`/support/grants/${req}/revoke`,{token:A.ownerToken,body:{}})).status).toBe(200);
-    expect((await api.call('GET','/items',as(admin.token))).status).toBe(400);
+    expect((await api.call('GET','/support/diagnostics',as(admin.token))).status).toBe(403);
     expect((await api.call('GET','/me',as(admin.token))).json.activeTenantId).toBeNull();
     expect((await enter(admin.token,A.tenantId,req)).status).toBe(403);
   });
@@ -74,12 +75,12 @@ describe('PR-C support access with the owner\'s explicit consent',()=>{
     const g=(await ask(admin.token,A.tenantId,{reason,minutes:15})).json.id;
     await api.call('POST',`/support/grants/${g}/approve`,{token:A.ownerToken,body:{}});
     expect((await enter(admin.token,A.tenantId,g)).status).toBe(200);
-    expect((await api.call('GET','/items',as(admin.token))).status).toBe(200);
+    expect((await api.call('GET','/support/diagnostics',as(admin.token))).status).toBe(200);
     const c=await owner.connect();                                              // simulate the end of the 15 minutes
     try { await c.query('BEGIN'); await c.query("SELECT set_config('app.tenant_id',$1,true)",[A.tenantId]);
       await c.query("UPDATE support_grants SET expires_at=now()-interval '1 second' WHERE id=$1",[g]); await c.query('COMMIT'); }
     finally { c.release(); }
-    expect((await api.call('GET','/items',as(admin.token))).status).toBe(400);
+    expect((await api.call('GET','/support/diagnostics',as(admin.token))).status).toBe(403);
     const r=(await ask(admin.token,A.tenantId,{reason,minutes:30})).json.id;
     expect((await api.call('POST',`/support/grants/${r}/refuse`,{token:A.ownerToken,body:{}})).status).toBe(200);
     expect((await enter(admin.token,A.tenantId,r)).status).toBe(403);
@@ -104,19 +105,44 @@ describe('PR-C support access with the owner\'s explicit consent',()=>{
     expect((await api.call('GET','/me',as(admin.token))).json.activeTenantId).toBeNull();
   });
 
-  it('SA5: "assist" can fix settings and the catalog, never sell, take payments, move stock or manage staff',async()=>{
-    const A=await createShop(api,admin,'pro','Assist shop',['butcher']);
-    const g=(await ask(admin.token,A.tenantId,{reason,minutes:60,scope:'assist'})).json.id;
-    await api.call('POST',`/support/grants/${g}/approve`,{token:A.ownerToken,body:{}});
-    expect((await enter(admin.token,A.tenantId,g)).status).toBe(200);
-    const beef=(await api.call('GET','/items',as(admin.token))).json.items.find((i:any)=>i.sku==='BUT-BOEUF');
-    expect((await api.call('PATCH',`/items/${beef.id}`,{token:admin.token,body:{price:125}})).status).toBe(200);
-    expect((await api.call('PATCH','/tenant',{token:admin.token,body:{company:{footer:'Merci'}}})).status).toBe(200);
-    expect((await api.call('POST','/sales/quick',{token:admin.token,headers:{'idempotency-key':key()},body:{branchId:A.branchId,lines:[{itemId:beef.id,qty:1}],payments:[]}})).status).toBe(403);
-    expect((await api.call('POST','/stock/receive',{token:admin.token,headers:{'idempotency-key':key()},body:{branchId:A.branchId,itemId:beef.id,qty:1,unitCost:1}})).status).toBe(403);
-    expect((await api.call('POST','/users',{token:admin.token,body:{email:'x@test.local',name:'x',password:'Correct-Horse-9',roleName:'cashier'}})).status).toBe(403);
-    expect((await api.call('GET','/support/grants',as(admin.token))).status).toBe(403);   // support cannot approve itself
-    const journal=(await api.call('GET',`/audit?refId=${g}`,as(A.ownerToken))).json.entries;
-    expect(journal.some((e:any)=>e.action==='support.request'&&e.meta.method==='PATCH'&&e.meta.path===`/items/${beef.id}`)).toBe(true);
+  it.each(['view','assist'])('SA5: %s consent gives diagnostics only and leaves merchant rows intact',async(scope)=>{
+    const support=await platformAdmin(api), token=support.token;
+    const A=await createShop(api,admin,'pro','Diagnostics');
+    const own=as(A.ownerToken);
+    const item=(await api.call('POST','/items',{...own,body:{name:'Synthetic service',sku:'FIX',kind:'service',trackQuantity:false,fulfillment:'none',price:70}})).json.id;
+    const sale=await api.call('POST','/sales/quick',{...own,headers:{'idempotency-key':key()},body:{
+      branchId:A.branchId,lines:[{itemId:item,qty:1}],payments:[{method:'cash',amount:70}]}});
+    expect(sale.status).toBe(201);
+    const invoices=(await api.call('GET','/invoices',own)).json.invoices;
+    const snapshot=async()=>Promise.all(['/invoices/'+invoices[0].id,'/items','/stock','/reports/summary'].map(async path=>(await api.call('GET',path,own)).json));
+    const before=await snapshot();
+    const grant=(await ask(token,A.tenantId,{reason,minutes:60,scope})).json.id;
+    await api.call('POST',`/support/grants/${grant}/approve`,{...own,body:{}});
+    expect((await enter(token,A.tenantId,grant)).status).toBe(200);
+    for(const [method,path,body] of [
+      ['GET','/items'],['GET','/invoices'],['GET','/invoices/'+invoices[0].id],['GET','/reports/summary'],
+      ['GET','/customers'],['GET','/cash-sessions'],['GET','/audit'],['GET','/users'],['GET','/tenant'],
+      ['GET','/order-menu'],['GET','/stock'],['GET','/platform/overview'],['PATCH','/items/'+item,{price:1}],
+      ['PUT','/items/'+item+'/options',{groups:[]}],['POST','/stock/receive',{branchId:A.branchId,itemId:item,qty:1,unitCost:1}],
+      ['PATCH','/tenant',{company:{footer:'Changed'}}],['GET','/support/grants']
+    ] as const) expect((await api.call(method,path,{token,body})).status,method+' '+path).toBe(403);
+    const entries=(await api.call('GET',`/audit?refId=${grant}`,own)).json.entries;
+    const denied=entries.find((e:any)=>e.meta?.path==='/items/:id' && e.meta.method==='PATCH');
+    expect(denied.meta).toEqual({method:'PATCH',path:'/items/:id'});
+    expect((await api.call('POST','/support/leave',{token})).status).toBe(200);
+    expect((await api.call('PATCH',`/platform/tenants/${A.tenantId}/controls`,{token,body:{
+      plan:'complete',limits:{max_users:9},features:{delivery:false},status:'suspended',reason:'Maintenance'
+    }})).status).toBe(200);
+    expect((await api.call('PATCH',`/platform/tenants/${A.tenantId}/controls`,{token,body:{status:'active'}})).status).toBe(200);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('the platform database identity has no merchant table grants or RLS bypass',async()=>{
+    const r=await platform.query(`SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user`);
+    expect(r.rows[0]).toEqual({rolsuper:false,rolbypassrls:false});
+    for(const table of ['customers','items','invoices','payments','stock_movements','audit_log']){
+      const p=await platform.query(`SELECT has_table_privilege(current_user,$1,'SELECT,UPDATE,INSERT,DELETE') AS access`,[table]);
+      expect(p.rows[0].access,table).toBe(false);
+    }
   });
 });

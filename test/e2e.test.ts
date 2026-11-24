@@ -231,7 +231,7 @@ describe('web UI in a real browser', () => {
     await page.fill('#sn', 'Butcher E2E'); await page.fill('#ss', slug);
     await page.locator('#act-butcher').check(); await page.locator('#act-grill').check();
     const ownerEmail = `owner.${slug}@test.local`;
-    await page.locator('#self-owner').uncheck();
+    expect(await page.locator('#self-owner').count()).toBe(0);
     await page.fill('#on', 'Owner E2E'); await page.fill('#oe', ownerEmail); await page.fill('#op', PW);
     await page.getByRole('button', { name: 'Créer', exact: true }).click();
     await page.waitForSelector(`td:has-text("${slug}")`);
@@ -297,25 +297,13 @@ describe('web UI in a real browser', () => {
     await ctx.close();
   }, 120_000);
 
-  it('E1b: platform admin creates pilot shop with their own account and opens its dashboard without another password', async () => {
-    const { ctx, page, problems } = await newPage();
-    await uiLogin(page, admin.email);
+  it('E1b: commercial provisioning requires a separate owner in the platform shell', async () => {
+    const {ctx,page}=await newPage();
+    await uiLogin(page,admin.email);
     await toShops(page);
-    const slug = uniq('pilotui').toLowerCase();
-    await page.getByRole('button', { name: /Nouvel établissement/ }).click();
-    await page.fill('#sn', 'Pilot Butcher');
-    await page.fill('#ss', slug);
-    await page.locator('#act-butcher').check();
-    await page.locator('#act-grill').check();
-    await page.locator('#act-restaurant').check();
-    expect(await page.locator('#self-owner').isChecked()).toBe(true);
-    expect(await page.locator('#oe').isVisible()).toBe(false);
-    await page.getByRole('button', { name: 'Créer', exact: true }).click();
-    await page.waitForSelector('#tile-sales');
-    await page.locator('nav.nav').getByRole('link', { name: 'Produits & services' }).click();
-    await page.waitForSelector('td:has-text("BUT-BOEUF")');
-    expect(await page.locator('td:has-text("EQP-POMPE")').count()).toBe(0);
-    expect(problems).toEqual([]);
+    await page.getByRole('button',{name:/Nouvel établissement/}).click();
+    expect(await page.locator('#oe').isVisible()).toBe(true);
+    expect(await page.locator('#self-owner').count()).toBe(0);
     await ctx.close();
   });
 
@@ -840,9 +828,10 @@ describe('web UI in a real browser', () => {
     await adm.page.reload();
     await adm.page.locator('#enter-support').click();
     await adm.page.locator('#support-banner').waitFor();
-    expect(await adm.page.locator('#support-banner').innerText()).toMatch(/Mode support TIJARA OS\s*· Consultation seulement/);
+    expect(await adm.page.locator('#support-banner').innerText()).toMatch(/Mode support TIJARA OS\s*· Diagnostic technique/);
     expect(await adm.page.locator('nav.nav').getByRole('link',{name:'Caisse',exact:true}).count()).toBe(0);   // view scope: no POS
-    await adm.page.locator('nav.nav').getByRole('link',{name:'Produits & services'}).click();
+    expect(await adm.page.locator('nav.nav a[href="#/items"]').count()).toBe(0);
+    await adm.page.locator('#support-diagnostics').waitFor();
     await adm.page.locator('#support-banner').waitFor();
     await shot(adm.page,'e20-support-mode');
 
