@@ -266,3 +266,7 @@ input[type=color]{width:72px;padding:.2rem}
 .support-banner .btn{min-height:38px;background:#fff;color:#1e3a8a;border-color:#fff}
 .support-request{border:1px solid var(--line);border-radius:12px;padding:.6rem .8rem;margin:.5rem 0}
 .support-request select{width:auto}
+/* long unbroken values (an e-mail, a slug, a reference) wrap inside cards instead of widening a phone screen */
+.card li,.card p,.card td,.card dd{overflow-wrap:anywhere}
+/* a group inside a row (e.g. the page's action buttons) never exceeds the row: it wraps instead of widening the phone screen */
+.row>*{max-width:100%;min-width:0}
