@@ -41,6 +41,8 @@ async function uiLogin(page: P, email: string, password = PW) {
   await page.fill('#pw', password);
   await page.click('button[type=submit]');
 }
+// NOTE: on an emulated phone Chrome widens the layout viewport to fit overflowing content, so innerWidth grows with it;
+// 'no horizontal scroll' is checked against the real screen width (375 px) instead.
 const shot=async(pg:P,name:string)=>{ if(process.env.SHOTS)await pg.screenshot({path:`${process.env.SHOTS}/${name}.png`}); };
 // the platform admin lands on the Control Center overview; the shop list is its own page
 const toShops = async (page: P, ar = false) => { await page.locator('nav.nav').getByRole('link', { name: ar ? 'المحلات' : 'Commerces', exact: true }).click(); };
@@ -77,7 +79,7 @@ describe('web UI in a real browser', () => {
     // the platform menu is its own: overview, shops, platform journal; no shop page (POS, stock...) appears in it
     expect(await mobile.page.locator('.workspace .nav a').allInnerTexts()).toEqual(['نظرة عامة','المحلات','سجل المنصة']);
     expect(await mobile.page.locator('.workspace.theme-platform').count()).toBe(1);
-    const fits = await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+    const fits = await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.screen.width);
     expect(fits).toBe(true);
     expect([...problems, ...mobile.problems]).toEqual([]);
     await mobile.ctx.close();
@@ -180,7 +182,7 @@ describe('web UI in a real browser', () => {
     await mobile.page.locator('nav.nav').getByRole('link',{name:'الورشة والإصلاح'}).click();
     await mobile.page.getByText('الورشة وأوامر الإصلاح').waitFor();
     expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
-    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
     expect(mobile.problems).toEqual([]);
     await mobile.ctx.close();
   });
@@ -322,12 +324,12 @@ describe('web UI in a real browser', () => {
     expect(await text(page, 'nav.nav')).toContain('نقطة البيع');
     await page.locator('nav.nav').getByRole('link', { name: 'نقطة البيع' }).click();
     await page.waitForSelector('button.prod[data-sku=EPI-HUILE]');
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.screen.width)).toBe(true);
     const h = await page.locator('button.prod[data-sku=EPI-HUILE]').boundingBox();
     expect(h.height).toBeGreaterThanOrEqual(48);
     await page.tap('button.prod[data-sku=EPI-HUILE]'); await page.tap('button.prod[data-sku=EPI-HUILE]');   // 2 x 18
     await page.waitForFunction(() => /36[.,]00/.test(document.querySelector('#cart-total')?.textContent?.replace(/\s/g, '') ?? ''));
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.screen.width)).toBe(true);
     await noLeaks(page);
     const pay = await page.locator('#pay-cash').boundingBox();
     expect(pay.height).toBeGreaterThanOrEqual(44);
@@ -661,7 +663,7 @@ describe('web UI in a real browser', () => {
     await mobile.page.selectOption('#purchase-item-0',beef.id);
     await mobile.page.locator('#purchase-exp-0').waitFor();
     await shot(mobile.page,'e16-receive-mobile-ar');
-    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
     expect(mobile.problems).toEqual([]);
     await mobile.ctx.close();
   }, 60_000);
@@ -707,12 +709,12 @@ describe('web UI in a real browser', () => {
     await mobile.page.locator('#owner-history li').first().waitFor();
     await shot(mobile.page,'e17-history-mobile-ar');
     expect(await mobile.page.locator('#repair-history').innerText()).toMatch(/داخل الضمان/);
-    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
     await mobile.page.keyboard.press('Escape');
     await mobile.page.getByRole('button',{name:'تعديل'}).click();
     await mobile.page.locator('#ve-customer').waitFor();
     await shot(mobile.page,'e17-edit-mobile-ar');
-    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
     expect(mobile.problems).toEqual([]);
     await mobile.ctx.close();
   }, 60_000);
@@ -730,7 +732,7 @@ describe('web UI in a real browser', () => {
     await mobile.page.getByText(/11-A-111/).waitFor();
     const body=await mobile.page.evaluate(()=>document.body.innerText);
     expect(body).not.toMatch(/22-B-222|Kangoo|Client Branche B/);
-    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
     await shot(mobile.page,'e18-branch-a-mobile-ar');
     expect(mobile.problems).toEqual([]);
     await mobile.ctx.close();
@@ -786,7 +788,7 @@ describe('web UI in a real browser', () => {
     await uiLogin(mobile.page,A.ownerEmail);
     await mobile.page.locator('nav.nav').getByRole('link',{name:'باقتي'}).click();
     await mobile.page.locator('#my-plan').waitFor();
-    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
     await shot(mobile.page,'e19-ma-formule-mobile-ar');
     await mobile.ctx.close();
     const adminMobile=await newPage({mobile:true,locale:'ar-MA'});
@@ -795,7 +797,10 @@ describe('web UI in a real browser', () => {
     expect(await adminMobile.page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--brand').trim())).not.toBe('#b91c1c');
     await adminMobile.page.goto(`${base}/app/#/platform-shop?id=${A.tenantId}`);
     await adminMobile.page.locator('#shop-360').waitFor();
-    expect(await adminMobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    expect(await adminMobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
+    // a real owner's e-mail can be long and unbreakable: it must wrap, not widen the phone screen (CI caught this)
+    await adminMobile.page.evaluate(()=>{const li=document.createElement('li');li.textContent='owner.shopmwtsu3rb1cd3fabcdefghijklmnop@testlocaldomainexample.ma';document.querySelector('#card-people ul')!.append(li);});
+    expect(await adminMobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.screen.width)).toBe(true);
     await shot(adminMobile.page,'e19-shop-360-mobile-ar');
     expect(adminMobile.problems).toEqual([]);
     await adminMobile.ctx.close();
