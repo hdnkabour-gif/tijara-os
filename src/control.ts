@@ -101,13 +101,15 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
   const member = async (rc: Rc) => {
     const s = rc.session!;
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first');
-    return { tenantId: s.activeTenantId, userId: s.userId };
+    const ctx = { tenantId: s.activeTenantId, userId: s.userId };
+    // a deactivated employee keeps a session until it expires: membership is checked on every call
+    const ok = (await withTenant(runtime, ctx, (c) => c.query('SELECT 1 FROM memberships WHERE tenant_id=$1 AND user_id=$2 AND active', [ctx.tenantId, ctx.userId]))).rowCount;
+    if (!ok) throw new HttpError(403, 'FORBIDDEN', 'no active membership');
+    return ctx;
   };
   add('GET', '/tenant/plan', 'session', async (rc) => {
     const ctx = await member(rc);
     const out = await withTenant(runtime, ctx, async (c) => {
-      const ok = (await c.query('SELECT 1 FROM memberships WHERE tenant_id=$1 AND user_id=$2 AND active', [ctx.tenantId, ctx.userId])).rowCount;
-      if (!ok) throw new HttpError(403, 'FORBIDDEN', 'no active membership');
       const r = (await c.query(`SELECT t.plan_id, p.name AS plan_name, t.status, t.trial_expires_at, p.features, COALESCE(q.feature_overrides,'{}'::jsonb) AS feature_overrides,
           COALESCE(q.max_users,p.max_users) AS max_users, COALESCE(q.max_items,p.max_items) AS max_items,
           COALESCE(q.max_branches,p.max_branches) AS max_branches, COALESCE(q.max_customers,p.max_customers) AS max_customers,

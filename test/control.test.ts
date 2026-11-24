@@ -93,6 +93,10 @@ describe('PR-B shop side: my plan (read-only) and branding',()=>{
     expect(img.headers.get('x-content-type-options')).toBe('nosniff');
     expect(Buffer.from(await img.arrayBuffer()).equals(Buffer.from(PNG,'base64'))).toBe(true);
     expect((await fetch(`${api.base}/tenant/logo`,{headers:{authorization:`Bearer ${B.ownerToken}`}})).status).toBe(404);
+    // a deactivated employee (session still alive) no longer reads anything of the shop
+    expect((await api.call('PATCH',`/users/${cashier.userId}`,{token:A.ownerToken,body:{active:false}})).status).toBe(200);
+    for(const path of ['/tenant/branding','/tenant/logo','/tenant/plan'])
+      expect((await api.call('GET',path,as(cashier.token))).status).toBe(403);
     // removing the logo, and the journal keeps the trace
     expect((await api.call('DELETE','/tenant/logo',{token:A.ownerToken})).status).toBe(200);
     expect((await api.call('GET','/tenant/branding',as(A.ownerToken))).json.hasLogo).toBe(false);
