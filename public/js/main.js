@@ -8,6 +8,7 @@ import { grillView, suppliersView, cashView, transformsView } from './grill-view
 import { vehiclesView, workshopView, workshopRemindersView } from './workshop-views.js';
 import { applyBranding, overviewView, planView, platformAuditView, shop360View, shopsView } from './control-views.js';
 import { supportBanner, supportRequestLabel } from './support-views.js';
+import { ordersView } from './orders-views.js';
 
 const root = document.getElementById('app');
 const S = { me: null, tenant: null, branches: [], branding: null, pendingSupport: 0, route: '' };
@@ -19,6 +20,7 @@ export const ownerOfShop = isOwner;
 const ROUTES = [
   { path: 'dashboard', label: 'nav_dashboard', show: () => can('report.view'), view: dashboardView },
   { path: 'pos', label: 'nav_pos', show: () => can('sale.create'), view: posView },
+  { path: 'orders', label: 'nav_orders', show: () => can('orders.view'), view: ordersView },
   { path: 'items', label: 'nav_items', show: () => can('catalog.view'), view: itemsView },
   { path: 'stock', label: 'nav_stock', show: () => can('stock.view'), view: stockView },
   { path: 'customers', label: 'nav_customers', show: () => can('customers.view'), view: customersView },

@@ -1,3 +1,4 @@
+import { editOptions, optionsLabel, orderableLabel } from './orders-views.js';
 import { api, confirmBox, errorBox, field, friendly, h, modal, newKey, num, toast, put } from './lib.js';
 import { dateFmt, money, qtyFmt, t, uom } from './i18n.js';
 
@@ -45,10 +46,12 @@ export async function itemsView(S, query) {
   const hasSample = list.some((i) => i.attributes?.sample);
   const manage = can(S, 'catalog.manage');
   const rows = list.map((i) => h('tr', { 'data-sku': i.sku, class: i.active ? '' : 'muted' }, h('td', null, i.sku),
-    h('td', null, i.name, i.attributes?.sample && h('span', { class: 'badge sample' }, ` ${t('sample')}`), !i.active && h('span', { class: 'badge bad' }, ` ${t('archived')}`)),
+    h('td', null, i.name, i.attributes?.sample && h('span', { class: 'badge sample' }, ` ${t('sample')}`), !i.active && h('span', { class: 'badge bad' }, ` ${t('archived')}`),
+      i.orderable && h('span', { class: 'badge ok' }, ` ${orderableLabel()}`)),
     h('td', null, t(typeOf(i))), h('td', { class: 'num' }, money(i.price)),
     h('td', null, manage && h('div', { class: 'row-actions' },
       h('button', { class: 'btn', type: 'button', 'data-action': 'edit', onclick: () => editItem(i, reload) }, t('edit')),
+      i.active && h('button', { class: 'btn', type: 'button', 'data-action': 'options', onclick: () => editOptions(i, items, reload).catch((e) => toast(friendly(e), true)) }, optionsLabel()),
       h('button', { class: 'btn danger', type: 'button', 'data-action': 'delete', onclick: async () => {
         if (!(await confirmBox(`${t('confirmDelete')} ${i.name}`))) return;
         try { await api('DELETE', `/items/${i.id}`); toast(t('deleted')); reload(); } catch (e) { toast(friendly(e), true); }

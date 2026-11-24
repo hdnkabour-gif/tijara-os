@@ -30,12 +30,14 @@ export function registerAdminRoutes(k: Kit) {
   add('PATCH', '/items/:id', 'session', async (rc) => {
     const a = await authorize(rc, 'catalog.manage'), id = uuid(rc.params.id, 'id');
     const name = optStr(rc.body.name, 'name'), price = optNum(rc.body.price, 'price', { min: 0 }), active = optBool(rc.body.active, 'active');
-    if (name === undefined && price === undefined && active === undefined) throw bad('nothing to update');
+    const orderable = optBool(rc.body.orderable, 'orderable');         // shown in the order intake (opt-in)
+    if (name === undefined && price === undefined && active === undefined && orderable === undefined) throw bad('nothing to update');
     await withTenant(runtime, a.ctx, async (c) => {
-      const before = (await c.query('SELECT name, price, active FROM items WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      const before = (await c.query('SELECT name, price, active, orderable FROM items WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (!before) throw new HttpError(404, 'NOT_FOUND', 'item not found');
-      await c.query('UPDATE items SET name=COALESCE($2,name), price=COALESCE($3,price), active=COALESCE($4,active) WHERE id=$1', [id, name ?? null, price ?? null, active ?? null]);
-      await audit(c, a.ctx.tenantId, a.ctx.userId, 'item.updated', { type: 'item', id }, before, { name, price, active });
+      await c.query('UPDATE items SET name=COALESCE($2,name), price=COALESCE($3,price), active=COALESCE($4,active), orderable=COALESCE($5,orderable) WHERE id=$1',
+        [id, name ?? null, price ?? null, active ?? null, orderable ?? null]);
+      await audit(c, a.ctx.tenantId, a.ctx.userId, 'item.updated', { type: 'item', id }, before, { name, price, active, orderable });
     });
     return { body: { status: 'ok' } };
   });

@@ -270,3 +270,10 @@ input[type=color]{width:72px;padding:.2rem}
 .card li,.card p,.card td,.card dd{overflow-wrap:anywhere}
 /* a group inside a row (e.g. the page's action buttons) never exceeds the row: it wraps instead of widening the phone screen */
 .row>*{max-width:100%;min-width:0}
+/* D1 order inbox */
+.order-card.pending{border-inline-start:4px solid #d97706}.order-card.accepted{border-inline-start:4px solid #16a34a}.order-card.rejected{opacity:.75}
+.order-lines{margin:.4rem 0;padding-inline-start:1.1rem}.order-lines li{margin:.2rem 0}
+.option-group{border:1px solid var(--line);border-radius:12px;padding:.4rem .7rem;margin:.5rem 0}.option-group legend{font-weight:700;padding:0 .3rem}
+.option-group .chip{display:inline-flex;align-items:center;gap:.35rem;margin:.2rem}.option-group input{width:auto;min-height:auto}
+.option-choice select{width:auto;max-width:100%}
+.kitchen-note{font-weight:700;color:#b45309}
