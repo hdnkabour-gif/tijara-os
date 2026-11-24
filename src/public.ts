@@ -13,8 +13,9 @@ import { type RequestIn, loadOptions, parseLines, quoteLines, insertRequest } fr
  * tracking link. Every endpoint is rate-limited; suspended / expired shops answer as if they had no menu.
  */
 const TOKEN_TTL_MS = 2 * 3600_000, MIN_FILL_MS = 3_000;
-const formSecret = process.env.PUBLIC_FORM_SECRET && process.env.PUBLIC_FORM_SECRET.length >= 32
-  ? process.env.PUBLIC_FORM_SECRET : crypto.randomBytes(32).toString('hex');   // per process when not configured
+const configuredSecret = process.env.PUBLIC_FORM_SECRET && process.env.PUBLIC_FORM_SECRET.length >= 32 ? process.env.PUBLIC_FORM_SECRET : null;
+// without a configured secret (development/tests) a per-process one is used; production refuses online orders instead
+const formSecret = configuredSecret ?? crypto.randomBytes(32).toString('hex');
 const sign = (s: string) => crypto.createHmac('sha256', formSecret).update(s).digest('base64url');
 /** A form token proves the order comes from a menu page opened a few seconds ago (bots post instantly or replay forever). */
 export const formToken = (tenantId: string, now = Date.now()) => `${now}.${sign(`${tenantId}.${now}`)}`;
@@ -27,7 +28,10 @@ function checkFormToken(tenantId: string, token: unknown, now = Date.now()) {
   if (now - t > TOKEN_TTL_MS) throw new HttpError(400, 'FORM_EXPIRED', 'the menu page is too old: reload it');
 }
 /** Tracking token = <shop id 16 bytes><24 random bytes>, base64url (54 chars). Only its SHA-256 is stored. */
-const newTracking = (tenantId: string) => Buffer.concat([Buffer.from(tenantId.replace(/-/g, ''), 'hex'), crypto.randomBytes(24)]).toString('base64url');
+/** Derived from the order's idempotency key with the server secret: a retry gets the same link, and the token itself is
+ *  never stored anywhere (neither in order_requests, which keeps its SHA-256, nor in the stored command result). */
+const trackingFor = (tenantId: string, key: string) => Buffer.concat([Buffer.from(tenantId.replace(/-/g, ''), 'hex'),
+  crypto.createHmac('sha256', formSecret).update(`track:${tenantId}:${key}`).digest().subarray(0, 24)]).toString('base64url');
 const hashToken = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
 function tenantOfToken(t: string): string | null {
   if (!/^[A-Za-z0-9_-]{54}$/.test(t)) return null;
@@ -133,6 +137,7 @@ export function registerPublicRoutes(k: Kit) {
 
   add('POST', '/public/shops/:slug/orders', 'public', async (rc) => {
     const { tenantId, ctx, s } = await shop(rc);
+    if (k.production && !configuredSecret) throw new HttpError(503, 'NOT_CONFIGURED', 'online ordering is not configured on this server');
     limit(ordersByIp, rc.ip); limit(ordersByShop, tenantId);
     const b = rc.body;
     if (b.website) throw new HttpError(400, 'VALIDATION', 'invalid form');                   // honeypot: hidden field only bots fill
@@ -150,11 +155,13 @@ export function registerPublicRoutes(k: Kit) {
     if (!/^[A-Za-z0-9_.:-]{16,100}$/.test(key)) throw bad('Idempotency-Key header (16-100 chars) is required');
     const p: RequestIn = {
       branchId: s.branch_id, channel: 'web', mode, customerId: null, customerName: name, customerPhone: phone, tableLabel: table,
-      wantedAt: new Date(wantedAt).toISOString(), note: b.note == null || b.note === '' ? null : str(b.note, 'note', 300), toKitchen: true,
+      wantedAt: new Date(wantedAt).toISOString(), note: b.note == null || b.note === '' ? null : str(b.note, 'note', 300), toKitchen: true,   // replaced below by the shop's kitchen module
       lines: parseLines(b.lines),
     };
     const consent = b.contactConsent === true;
-    // the token is created once per command: a retried request returns the SAME tracking link (stored in the command result)
+    // a shop without the kitchen module pays at once from the inbox; with it, the kitchen marks the order ready first
+    p.toKitchen = await withTenant(runtime, ctx, (c) => shopHasFeature(c, tenantId, 'kitchen'));
+    const tracking = trackingFor(tenantId, key);
     const result = await runCommand(runtime, ctx, { key: `web:${key}`, type: 'public_order', payload: { ...p, consent } }, async (cc) => {
       // one order at a time per shop for the slot check: two customers cannot both take the last place of a slot
       await cc.client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`slots:${tenantId}`]);
@@ -162,11 +169,10 @@ export function registerPublicRoutes(k: Kit) {
       if (!slot) throw bad('this time slot is not available: choose another one');
       if (slot.left <= 0) throw new HttpError(409, 'SLOT_FULL', 'this time slot is full: choose another one');
       const q = await quoteLines(cc.client, p.lines, { publicMenu: true });
-      const tracking = newTracking(tenantId);
       await insertRequest(cc, p, q, { trackingHash: hashToken(tracking), contactConsent: consent });
-      return { tracking, total: q.total, wantedAt: p.wantedAt };
+      return { total: q.total, wantedAt: p.wantedAt };                // stored for retries: no token in it
     });
-    return { status: 201, body: result };
+    return { status: 201, body: { ...result, tracking } };
   });
 
   /** Private tracking: the token in the body (not the URL: no logs, no referrer). Status and the order only - no name, no phone. */

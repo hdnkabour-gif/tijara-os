@@ -193,6 +193,8 @@ describe('D2 online orders: server price, slots, anti-abuse, inbox, tracking',()
       try{ await stored.query("SELECT set_config('app.tenant_id',$1,false)",[A.tenantId]);
         const row=(await stored.query('SELECT tracking_hash FROM order_requests WHERE channel=$1',['web'])).rows[0];
         expect(row.tracking_hash).toBe(crypto.createHash('sha256').update(r.json.tracking).digest('hex'));   // only the hash is stored
+        const stored2=(await stored.query("SELECT result::text AS r FROM business_commands WHERE command_type='public_order'")).rows;
+        expect(stored2.length).toBe(1); expect(stored2[0].r).not.toContain(r.json.tracking);           // not in the replay record either
       }finally{ await stored.query("SELECT set_config('app.tenant_id','',false)"); stored.release(); }
       // a closed online ordering is refused without touching the cashier
       expect((await api.call('PUT','/menu/settings',{token:A.ownerToken,body:{published:true,acceptingOrders:false,hours:ALL_WEEK}})).status).toBe(200);
@@ -254,5 +256,28 @@ describe('D2 online orders: server price, slots, anti-abuse, inbox, tracking',()
     // wrong, altered or other-shop tokens find nothing
     const altered=tracking.slice(0,-3)+(tracking.endsWith('AAA')?'BBB':'AAA');
     for(const bad of ['nope','x'.repeat(54),altered]) expect((await api.call('POST','/public/track',{body:{token:bad}})).status).toBe(404);
+  });
+});
+
+describe('D2 review fixes',()=>{
+  it('PB11: a shop without the kitchen module pays an online order at once; production without PUBLIC_FORM_SECRET refuses online orders',async()=>{
+    const {A,slug,menu,beef,choice}=await menuShop('No kitchen');
+    expect((await api.call('PATCH',`/platform/tenants/${A.tenantId}/controls`,{token:admin.token,body:{features:{kitchen:false}}})).status).toBe(200);
+    const m=await readyToOrder(menu);
+    try{
+      expect((await order(slug,{formToken:m.formToken,mode:'pickup',wantedAt:m.ordering.slots[0].at,customerName:'Client',customerPhone:'0600000004',
+        lines:[{itemId:beef,qty:2,choiceIds:[choice('Nature')]}]})).status).toBe(201);
+    }finally{vi.useRealTimers();}
+    const req=(await api.call('GET',`/order-requests?branchId=${A.branchId}&status=pending`,as(A.ownerToken))).json.requests[0];
+    expect(req.to_kitchen).toBe(false);
+    const acc=(await api.call('POST',`/order-requests/${req.id}/accept`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{}})).json;
+    expect((await api.call('POST',`/order-requests/${req.id}/pay`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{payments:[{method:'cash',amount:Number(acc.total)}]}})).status).toBe(201);
+    // production without the secret: the menu still shows, online orders are refused (never an unstable secret)
+    const prod=await startApp(true);
+    try{
+      const r=await prod.call('POST',`/public/shops/${slug}/orders`,{headers:{'idempotency-key':`k-${crypto.randomUUID()}`},body:{}});
+      expect(r.status).toBe(503); expect(r.json.error.code).toBe('NOT_CONFIGURED');
+      expect((await prod.call('GET',`/public/shops/${slug}/menu`)).status).toBe(200);
+    }finally{await prod.close();}
   });
 });
