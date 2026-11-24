@@ -800,4 +800,46 @@ describe('web UI in a real browser', () => {
     expect(adminMobile.problems).toEqual([]);
     await adminMobile.ctx.close();
   }, 90_000);
+  it('E20: support access through the UI: platform asks, the owner approves, support works under a banner, the owner cuts it off', async () => {
+    const supAdmin=await platformAdmin(api);
+    const A=await createShop(api,admin,'pro','Support UI shop',['butcher']);
+    const adm=await newPage();
+    await uiLogin(adm.page,supAdmin.email);
+    await adm.page.locator('#platform-overview').waitFor();
+    await adm.page.goto(`${base}/app/#/platform-shop?id=${A.tenantId}`);
+    await adm.page.locator('#support-section').waitFor();
+    await adm.page.fill('#sup-reason','Vérifier un prix affiché en caisse');
+    await adm.page.selectOption('#sup-minutes','60');
+    await adm.page.locator('#send-support').click();
+    await adm.page.locator('#support-requests').getByText('En attente du propriétaire').waitFor();
+    expect(await adm.page.locator('#enter-support').count()).toBe(0);              // nothing to enter before the owner says yes
+
+    const own=await newPage();
+    await uiLogin(own.page,A.ownerEmail);
+    await own.page.locator('#support-pending').click();                           // the owner is told in the top bar
+    await own.page.locator('#support-card .support-request').getByText('Vérifier un prix affiché en caisse').waitFor();
+    await own.page.locator('#support-card .support-request').getByRole('button',{name:'Accepter'}).click();
+    await own.page.locator('#revoke-support').waitFor();
+    await own.page.locator('#support-pending').waitFor({state:'detached'});         // the top-bar notice goes away once decided
+    await shot(own.page,'e20-owner-support');
+
+    await adm.page.reload();
+    await adm.page.locator('#enter-support').click();
+    await adm.page.locator('#support-banner').waitFor();
+    expect(await adm.page.locator('#support-banner').innerText()).toMatch(/Mode support TIJARA OS\s*· Consultation seulement/);
+    expect(await adm.page.locator('nav.nav').getByRole('link',{name:'Caisse',exact:true}).count()).toBe(0);   // view scope: no POS
+    await adm.page.locator('nav.nav').getByRole('link',{name:'Produits & services'}).click();
+    await adm.page.locator('#support-banner').waitFor();
+    await shot(adm.page,'e20-support-mode');
+
+    await own.page.locator('#revoke-support').click();
+    await own.page.locator('#support-card').getByText('Révoquée').waitFor();
+    await adm.page.reload();
+    await adm.page.locator('#platform-overview').waitFor();                        // back to the Control Center, no shop
+    expect(await adm.page.locator('#support-banner').count()).toBe(0);
+    await own.page.locator('nav.nav').getByRole('link',{name:'Journal'}).click();
+    await own.page.getByText('support.request').first().waitFor();
+    expect([...adm.problems.filter((p:string)=>!/40[03]/.test(p)),...own.problems]).toEqual([]);
+    await adm.ctx.close(); await own.ctx.close();
+  }, 90_000);
 });

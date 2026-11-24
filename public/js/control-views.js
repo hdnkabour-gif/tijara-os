@@ -1,6 +1,7 @@
 import { api, errorBox, field, friendly, h, put, toast } from './lib.js';
 import { dateFmt, dayFmt, getLang, t } from './i18n.js';
 import { openControls, platformView } from './platform.js';
+import { platformSupportSection } from './support-views.js';
 
 /** PR-B: Platform Control Center pages (platform admins, metadata only) + the shop's "Ma formule" and branding. */
 const L = {
@@ -139,7 +140,8 @@ export async function shop360View(S, query) {
         h('h3', null, c('branches')), h('ul', null, s.people.branches.map((b) => h('li', null, b))))),
     s.alerts.length > 0 && h('section', { class: 'card', id: 'card-alerts' }, h('h2', null, c('alerts')),
       h('ul', null, s.alerts.map((a) => h('li', null, h('span', { class: 'badge bad' }, c(`k_${a.kind}`)), ` ${alertDetail(a)}`)))),
-    h('section', { class: 'card', id: 'card-history' }, h('h2', null, c('history')), auditTable(s.history, false)));
+    h('section', { class: 'card', id: 'card-history' }, h('h2', null, c('history')), auditTable(s.history, false)),
+    await platformSupportSection(s.id));
   sizeMeters(wrap);
   return wrap;
 }

@@ -1,4 +1,5 @@
 import { brandingCard } from './control-views.js';
+import { ownerSupportCard } from './support-views.js';
 import { api, confirmBox, errorBox, field, friendly, h, modal, put, toast } from './lib.js';
 import { dateFmt, money, qtyFmt, roleLabel, t, uom } from './i18n.js';
 
@@ -119,7 +120,9 @@ function editRole(r, groups, done) {
 // ───────────── settings: shop identity + branches ─────────────
 export async function settingsView(S) {
   const tenant = await api('GET', '/tenant'); const { branches } = await api('GET', '/branches');
-  const branding = can(S, 'settings.manage') ? await api('GET', '/tenant/branding') : null;
+  const branding = can(S, 'settings.manage') && !S.me.support ? await api('GET', '/tenant/branding') : null;
+  const isOwner = !S.me.support && S.me.tenants?.find((m) => m.tenant_id === S.me.activeTenantId)?.role_name === 'owner';
+  const supportCard = isOwner ? await ownerSupportCard() : null;
   const wrap = h('div'); const reload = () => settingsView(S).then((v) => wrap.replaceWith(v));
   const c = tenant.company ?? {};
   const inp = (id, v, attrs = {}) => h('input', { id, value: v ?? '', ...attrs });
@@ -148,7 +151,8 @@ export async function settingsView(S) {
     branding && brandingCard(S, branding, async () => {
       S.branding = await api('GET', '/tenant/branding');
       window.dispatchEvent(new HashChangeEvent('hashchange'));     // redraw the shell: new colors and logo everywhere
-    }));
+    }),
+    supportCard);
   return wrap;
 }
 function nameDialog(title, value, save) {

@@ -16,3 +16,10 @@ export const PERMISSION_GROUPS: { id: string; permissions: string[] }[] = [
 ];
 export const ALL_PERMISSIONS = PERMISSION_GROUPS.flatMap((g) => g.permissions);
 export const isPermission = (p: string) => ALL_PERMISSIONS.includes(p);
+
+/** What a support agent may do under an owner-approved grant. Never: sell, take payments, move stock, manage staff. */
+const VIEW_ONLY = ALL_PERMISSIONS.filter((p) => p.endsWith('.view') || p === 'report.view_profit');
+export const SUPPORT_SCOPES: Record<'view' | 'assist', string[]> = {
+  view: VIEW_ONLY,
+  assist: [...VIEW_ONLY, 'catalog.manage', 'settings.manage', 'branches.manage'],
+};
