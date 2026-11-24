@@ -41,9 +41,9 @@ export function createApp(d: AppDeps): http.RequestListener {
     `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${d.production ? '; Secure' : ''}`;
   const loginByIp = new RateLimiter(30, 15 * 60_000), loginByEmail = new RateLimiter(10, 15 * 60_000), forgotByIp = new RateLimiter(10, 15 * 60_000);
 
-  /** Support session (owner-approved grant, already validated in auth_get_session): the grant's scope replaces a role,
-   *  and EVERY request is written to the shop's own journal so the owner sees exactly what support did. */
-  async function supportRow(ctx: { tenantId: string; userId: string }, grantId: string, rc: Rc) {
+  /** Support session (owner-approved grant, already validated in auth_get_session): the grant's scope replaces a role.
+   *  Journaling of every request happens in the dispatcher, for ALL handlers (not only those using authorize()). */
+  async function supportRow(ctx: { tenantId: string; userId: string }, grantId: string, _rc: Rc) {
     return withTenant(d.runtime, ctx, async (c) => {
       const r = (await c.query(
         `SELECT '{}'::uuid[] AS branch_ids, 'support' AS role_name, t.status AS shop_status, t.plan_id AS shop_plan,
@@ -52,8 +52,6 @@ export function createApp(d: AppDeps): http.RequestListener {
            LEFT JOIN tenant_quotas q ON q.tenant_id=t.id
           WHERE g.id=$1 AND g.tenant_id=$2 AND g.status='approved' AND g.revoked_at IS NULL AND g.expires_at>now()`, [grantId, ctx.tenantId])).rows[0];
       if (!r) return undefined;
-      await audit(c, ctx.tenantId, ctx.userId, 'support.request', { type: 'support_grant', id: grantId }, undefined, undefined,
-        { method: rc.req.method, path: (rc.req.url ?? '').split('?')[0] });
       return { ...r, perms: SUPPORT_SCOPES[r.scope as 'view' | 'assist'] };
     });
   }
@@ -489,6 +487,13 @@ export function createApp(d: AppDeps): http.RequestListener {
       if (matched.r.auth === 'session') {
         session = token ? await authm.getSession(d.runtime, token) : null;
         if (!session) throw new HttpError(401, 'UNAUTHENTICATED', 'authentication required');
+        // every request made under a support grant, whatever handler serves it, goes to the shop's own journal first
+        if (session.supportGrantId && session.activeTenantId) {
+          const grantId = session.supportGrantId;
+          await withTenant(d.runtime, { tenantId: session.activeTenantId, userId: session.userId }, (c) =>
+            audit(c, session!.activeTenantId!, session!.userId, 'support.request', { type: 'support_grant', id: grantId }, undefined, undefined,
+              { method: req.method, path: url.pathname }));
+        }
       }
       const out = await matched.r.handler({ req, body, query: url.searchParams, params: matched.params, token, session, ip: clientIp(req), viaCookie });
       return send(res, out.status ?? 200, out.body, out.headers);

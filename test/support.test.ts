@@ -58,7 +58,10 @@ describe('PR-C support access with the owner\'s explicit consent',()=>{
     const journal=(await api.call('GET',`/audit?refId=${req}`,as(A.ownerToken))).json.entries;
     const actions=journal.map((e:any)=>e.action);
     expect(actions).toEqual(expect.arrayContaining(['support.requested','support.approved','support.entered','support.request']));
-    expect(journal.filter((e:any)=>e.action==='support.request').map((e:any)=>e.meta.path)).toEqual(expect.arrayContaining(['/items','/customers','/sales/quick']));
+    // EVERY request is journaled, including handlers that do not use the permission helper (/me, /tenant)
+    expect((await api.call('GET','/tenant',as(admin.token))).status).toBe(200);
+    const paths=(await api.call('GET',`/audit?refId=${req}`,as(A.ownerToken))).json.entries.filter((e:any)=>e.action==='support.request').map((e:any)=>e.meta.path);
+    expect(paths).toEqual(expect.arrayContaining(['/me','/items','/customers','/sales/quick','/tenant']));
     // revocation takes effect on the very next request
     expect((await api.call('POST',`/support/grants/${req}/revoke`,{token:A.ownerToken,body:{}})).status).toBe(200);
     expect((await api.call('GET','/items',as(admin.token))).status).toBe(400);
