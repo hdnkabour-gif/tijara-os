@@ -94,6 +94,23 @@ describe('web UI in a real browser', () => {
     await mobile.ctx.close();
   });
 
+  it('activity-specific navigation and direct hashes on desktop FR and mobile AR',async()=>{
+    for (const [activity,mobile,visible,hidden] of [['grill',false,'grill','vehicles'],['mechanic',true,'vehicles','grill']] as const) {
+      const shop=await createShop(api,admin,'pro','Navigation '+activity,[activity]);
+      const {ctx,page}=await newPage({mobile,locale:mobile?'ar-MA':'fr-FR'});
+      try {
+        await uiLogin(page,shop.ownerEmail);
+        await page.waitForSelector('#tile-sales');
+        expect(await page.locator('nav a[href="#/'+visible+'"]').count()).toBe(1);
+        expect(await page.locator('nav a[href="#/'+hidden+'"]').count()).toBe(0);
+        await page.goto(base+'/app/#/'+hidden);
+        await page.waitForSelector('#tile-sales');
+        expect(page.url()).not.toMatch(new RegExp('/'+hidden+'$'));
+        if(mobile){expect(await page.locator('html').getAttribute('dir')).toBe('rtl');await fitsPhone(page);}
+      } finally {await ctx.close();}
+    }
+  });
+
   it('E11: kitchen dashboard confirms a real order flow and fits a Moroccan mobile screen in Arabic', async () => {
     const shop=await createShop(api,admin,'pro','Grill Pilot',['butcher','grill']);
     const grillItems=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
