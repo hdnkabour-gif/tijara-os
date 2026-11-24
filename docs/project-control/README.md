@@ -38,3 +38,7 @@ Separate decisions: code review, merge authorization, deployment authorization, 
 5. One next task, with owner and acceptance criteria.
 
 This initial file defines the process; the historical migration is maintained privately and must be reconciled with current repository evidence before any status is marked VERIFIED.
+
+## Latest project handoff
+
+- [TIJ-H-20261124-D2 — D2 merged/staging verified, #23/#19 gates, D3 handoff](./HANDOFF-TIJ-2026-11-24-D2.md) (documented on 2026-11-24). This is documentation only, not merged to `main`; the linked SHA and CI evidence are source-specific. Follow the private Project Control Center record for historical decisions and sensitive context.
