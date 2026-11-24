@@ -7,12 +7,15 @@ import { posView } from './pos.js';
 import { grillView, suppliersView, cashView, transformsView } from './grill-views.js';
 import { vehiclesView, workshopView, workshopRemindersView } from './workshop-views.js';
 import { applyBranding, overviewView, planView, platformAuditView, shop360View, shopsView } from './control-views.js';
+import { supportBanner, supportRequestLabel } from './support-views.js';
 
 const root = document.getElementById('app');
-const S = { me: null, tenant: null, branches: [], branding: null, route: '' };
+const S = { me: null, tenant: null, branches: [], branding: null, pendingSupport: 0, route: '' };
 export const state = S;
 
 const can = (p) => S.me?.permissions?.includes(p);
+const isOwner = () => !S.me?.support && S.me?.tenants?.find((m) => m.tenant_id === S.me.activeTenantId)?.role_name === 'owner';
+export const ownerOfShop = isOwner;
 const ROUTES = [
   { path: 'dashboard', label: 'nav_dashboard', show: () => can('report.view'), view: dashboardView },
   { path: 'pos', label: 'nav_pos', show: () => can('sale.create'), view: posView },
@@ -31,7 +34,7 @@ const ROUTES = [
   { path: 'roles', label: 'nav_roles', show: () => can('users.manage'), view: rolesView },
   { path: 'settings', label: 'nav_settings', show: () => can('settings.manage') || can('branches.manage'), view: settingsView },
   { path: 'journal', label: 'nav_journal', show: () => can('audit.view'), view: journalView },
-  { path: 'plan', label: 'nav_plan', show: () => true, view: planView },
+  { path: 'plan', label: 'nav_plan', show: () => !S.me?.support, view: planView },
   { path: 'invoice', label: 'invoiceTitle', show: () => can('sale.view'), view: invoiceView, hidden: true },
 ];
 /** The platform has its OWN shell, menu and theme: it never shares navigation with a shop. */
@@ -55,6 +58,9 @@ async function boot() {
     try { S.tenant = await api('GET', '/tenant'); } catch { S.tenant = null; }
     try { S.branches = (await api('GET', '/branches')).branches; } catch { S.branches = []; }
     try { S.branding = await api('GET', '/tenant/branding'); } catch { S.branding = null; }
+    // the owner is told at once when the TIJARA OS support team asks to access the shop
+    S.pendingSupport = 0;
+    if (isOwner()) { try { S.pendingSupport = (await api('GET', '/support/grants')).grants.filter((g) => g.status === 'requested').length; } catch { /* not decisive */ } }
   } else { S.tenant = null; S.branches = []; S.branding = null; }
   render();
 }
@@ -80,7 +86,9 @@ async function render() {
   if (path === 'forgot') return void root.appendChild(publicShell(forgotView()));
   if (!S.me) return void root.appendChild(publicShell(loginView(async () => { go(''); await boot(); })));
   // a platform admin lands in the Control Center; a shop opens only on an explicit shop route (e.g. after choosing it)
-  if (S.me.isPlatformAdmin && (path === '' || path.startsWith('platform') || !S.me.activeTenantId)) return platformShell(path, query);
+  // a platform admin lands in the Control Center; a shop opens only on an explicit shop route (e.g. after choosing it,
+  // or under an owner-approved support grant)
+  if (S.me.isPlatformAdmin && (path.startsWith('platform') || !S.me.activeTenantId || (path === '' && !S.me.support))) return platformShell(path, query);
   if (!S.me.activeTenantId && S.me.tenants.length > 1) {
     return void root.appendChild(publicShell(tenantPicker(S.me.tenants, async (id) => {
       try { await api('POST', '/auth/switch-tenant', { tenantId: id }); await boot(); } catch (e) { toast(friendly(e), true); }
@@ -125,7 +133,8 @@ async function render() {
           h('span', { class: 'brand-context' }, `${t('app')} · ${S.me.user.name}`))),
       h('div', { class: 'topbar-actions' },
         h('span', { class: 'environment-badge' }, t('demoBadge')),
-        S.me.isPlatformAdmin && h('button', { type: 'button', id: 'to-control-center', onclick: () => go('platform') }, t('controlCenter')),
+        S.pendingSupport > 0 && h('a', { class: 'btn primary', id: 'support-pending', href: '#/settings' }, `${supportRequestLabel()} (${S.pendingSupport})`),
+        S.me.isPlatformAdmin && !S.me.support && h('button', { type: 'button', id: 'to-control-center', onclick: () => go('platform') }, t('controlCenter')),
         langToggle(),
         h('button', { type: 'button', onclick: logout }, t('logout')))),
     h('nav', { class: 'nav', 'aria-label': 'navigation' },
@@ -133,6 +142,10 @@ async function render() {
       visible.filter((r) => !r.hidden).map((r) => h('a', { href: `#/${r.path}`, ...(r.path === current.path ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
     main));
   await mount(main, current, query);
+  if (S.me?.support) main.prepend(supportBanner(S.me.support, async () => {
+    try { await api('POST', '/support/leave'); } catch { /* the session may already have lost the shop */ }
+    location.hash = '#/platform'; await boot();
+  }));
 }
 
 async function mount(main, route, query) {
@@ -175,4 +188,9 @@ async function platformShell(path, query) {
 }
 
 window.addEventListener('hashchange', render);
+window.addEventListener('support-changed', async () => {
+  try { S.pendingSupport = (await api('GET', '/support/grants')).grants.filter((g) => g.status === 'requested').length; } catch { return; }
+  const notice = document.getElementById('support-pending');
+  if (S.pendingSupport === 0) notice?.remove(); else if (notice) notice.textContent = `${supportRequestLabel()} (${S.pendingSupport})`;
+});
 boot();

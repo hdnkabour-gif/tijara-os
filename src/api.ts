@@ -2,6 +2,7 @@ import http from 'node:http';
 import type pg from 'pg';
 import * as authm from './auth.js';
 import { audit } from './audit.js';
+import { SUPPORT_SCOPES } from './permissions.js';
 import { runCommand } from './commands.js';
 import { createItem } from './catalog.js';
 import { withTenant } from './db.js';
@@ -14,6 +15,7 @@ import { registerAdminRoutes } from './admin.js';
 import { registerGrillRoutes } from './grill.js';
 import { registerWorkshopRoutes } from './workshop.js';
 import { registerControlRoutes } from './control.js';
+import { registerSupportRoutes } from './support.js';
 import type { Handler, Rc } from './kit.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
@@ -39,12 +41,29 @@ export function createApp(d: AppDeps): http.RequestListener {
     `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${d.production ? '; Secure' : ''}`;
   const loginByIp = new RateLimiter(30, 15 * 60_000), loginByEmail = new RateLimiter(10, 15 * 60_000), forgotByIp = new RateLimiter(10, 15 * 60_000);
 
+  /** Support session (owner-approved grant, already validated in auth_get_session): the grant's scope replaces a role,
+   *  and EVERY request is written to the shop's own journal so the owner sees exactly what support did. */
+  async function supportRow(ctx: { tenantId: string; userId: string }, grantId: string, rc: Rc) {
+    return withTenant(d.runtime, ctx, async (c) => {
+      const r = (await c.query(
+        `SELECT '{}'::uuid[] AS branch_ids, 'support' AS role_name, t.status AS shop_status, t.plan_id AS shop_plan,
+                t.trial_expires_at, p.features AS plan_features, COALESCE(q.feature_overrides,'{}'::jsonb) AS feature_overrides, g.scope
+           FROM support_grants g JOIN tenants t ON t.id=g.tenant_id JOIN plans p ON p.id=t.plan_id
+           LEFT JOIN tenant_quotas q ON q.tenant_id=t.id
+          WHERE g.id=$1 AND g.tenant_id=$2 AND g.status='approved' AND g.revoked_at IS NULL AND g.expires_at>now()`, [grantId, ctx.tenantId])).rows[0];
+      if (!r) return undefined;
+      await audit(c, ctx.tenantId, ctx.userId, 'support.request', { type: 'support_grant', id: grantId }, undefined, undefined,
+        { method: rc.req.method, path: (rc.req.url ?? '').split('?')[0] });
+      return { ...r, perms: SUPPORT_SCOPES[r.scope as 'view' | 'assist'] };
+    });
+  }
+
   /** Resolve tenant context from the SESSION only (never from the request), check membership, permission and branch scope. */
   async function authorize(rc: Rc, perm: string) {
     const s = rc.session!;
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first (POST /auth/switch-tenant)');
     const ctx = { tenantId: s.activeTenantId, userId: s.userId };
-    const row = (await withTenant(d.runtime, ctx, (c) => c.query(
+    const row = s.supportGrantId ? await supportRow(ctx, s.supportGrantId, rc) : (await withTenant(d.runtime, ctx, (c) => c.query(
       `SELECT m.branch_ids, r.name AS role_name, t.status AS shop_status, t.plan_id AS shop_plan,
               t.trial_expires_at AS trial_expires_at, p.features AS plan_features,
               COALESCE(q.feature_overrides,'{}'::jsonb) AS feature_overrides,
@@ -126,7 +145,9 @@ export function createApp(d: AppDeps): http.RequestListener {
           FROM tenants t JOIN plans p ON p.id=t.plan_id LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=$1`,
           [s.activeTenantId])).rows[0];
         if (!ps || ps.status!=='active' || (ps.plan_id==='trial' && ps.trial_expires_at && new Date(ps.trial_expires_at)<=new Date())) return [];
-        const list = (await c.query(`SELECT rp.permission FROM memberships m JOIN role_permissions rp
+        const list = s.supportGrantId
+          ? SUPPORT_SCOPES[(await c.query('SELECT scope FROM support_grants WHERE id=$1',[s.supportGrantId])).rows[0]?.scope as 'view'|'assist']?.map((permission) => ({ permission })) ?? []
+          : (await c.query(`SELECT rp.permission FROM memberships m JOIN role_permissions rp
           ON rp.tenant_id=m.tenant_id AND rp.role_id=m.role_id
           WHERE m.tenant_id=$1 AND m.user_id=$2 AND m.active ORDER BY 1`,[s.activeTenantId,s.userId])).rows;
         const entitled=(perm:string)=>{
@@ -140,7 +161,11 @@ export function createApp(d: AppDeps): http.RequestListener {
       });
       permissions = result;
     }
-    return { body: { user: { id: s.userId, name: s.name, email: s.email }, isPlatformAdmin: s.isPlatformAdmin, activeTenantId: s.activeTenantId, tenants, permissions } };
+    let support = null;
+    if (s.supportGrantId && s.activeTenantId)
+      support = (await withTenant(d.runtime, { tenantId: s.activeTenantId, userId: s.userId }, (c) => c.query(
+        'SELECT id, scope, expires_at AS "expiresAt", reason FROM support_grants WHERE id=$1', [s.supportGrantId]))).rows[0] ?? null;
+    return { body: { user: { id: s.userId, name: s.name, email: s.email }, isPlatformAdmin: s.isPlatformAdmin, activeTenantId: s.activeTenantId, tenants, permissions, support } };
   });
 
   add('GET', '/activities', 'session', async () => ({ body: { activities: ACTIVITIES.map((a) => ({ id: a.id, label: a.label, sampleItems: a.items.length })) } }));
@@ -388,6 +413,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   registerGrillRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
   registerWorkshopRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
   registerControlRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform }, { version: d.version ?? 'dev', expectedMigrations: d.expectedMigrations });
+  registerSupportRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
 
   // ───────────── dispatcher ─────────────
   const clientIp = (req: http.IncomingMessage) =>

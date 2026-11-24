@@ -3,13 +3,13 @@
 Short, factual log of what is merged, deployed and authorized. Update it in every PR that changes the release state.
 Statuses per change: **code accepted → merged → staging validated → production validated → real data authorized**.
 
-## Current state (2026-11-23)
+## Current state (2026-11-24)
 
 | Item | State |
 |---|---|
-| `main` | `a075212` (PR #13 merged). CI PG16 + PG18 green: [run 45271916549](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45271916549) |
-| Staging (Railway project `tijara-os-staging`, environment `staging`) | app + migrator run `a075212`; `/ready`: `pendingMigrations 0`, `unprotectedTables 0`, `rlsBypassPossible false` |
-| Migrations live on staging | 001 → 011 (011 applied 2026-11-23 by the migrator, logged `migration applied: 011_receiving_warranty_vehicles.sql`) |
+| `main` | `e672fec` (PR #15 merged). CI PG16 + PG18 green: [run 45389736567](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45389736567) |
+| Staging (Railway project `tijara-os-staging`, environment `staging`) | app + migrator run `e672fec`; `/ready`: `pendingMigrations 0`, `unprotectedTables 0`, `rlsBypassPossible false` |
+| Migrations live on staging | 001 → 012 (011 applied 2026-11-23, 012 applied 2026-11-24; both logged by the migrator) |
 | Production | **does not exist yet**. No separate project, database, domain or secrets. Nothing is "production validated". |
 | Real data | **not authorized**. Blocked by the production gate below. |
 | Repository visibility | **public** (owner action pending: Settings → General → Danger Zone → Private). History may already have been copied. |
@@ -20,7 +20,8 @@ Statuses per change: **code accepted → merged → staging validated → produc
 |---|---|---|---|---|---|---|
 | #12 | grill/workshop integrity (reminders, mileage, multi-line, stable idempotency keys) | ✅ | ✅ `3d4f8b9` | ✅ `3d4f8b9` | — | — |
 | #13 | PR-A: receipts with lot/expiry/serials, warranty end, vehicle owner/plate history, branch-scoped vehicles, Casablanca calendar days | ✅ | ✅ `a075212` | ✅ `a075212` + migration 011 | — | — |
-| PR-B | platform Control Center vs shop workspace, 360° shop card, `Ma formule`, shop branding (migration 012) | in review | — | — | — | — |
+| #15 | PR-B: platform Control Center vs shop workspace, 360° card, `Ma formule`, shop branding, backup status from recorded runs (migration 012) | ✅ | ✅ `e672fec` | ✅ `e672fec` + migration 012 | — | — |
+| PR-C | owner-approved, time-limited, revocable support access; every support request journaled (migration 013) | in review | — | — | — | — |
 
 ## Known gaps and risks (open)
 

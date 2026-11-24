@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const ALLOWED: Record<string, string[]> = {
   errors: [], db: [], audit: [], clock: [],
   auth: [], http: [],
-  api: ['auth', 'audit', 'commands', 'catalog', 'db', 'errors', 'inventory', 'tenancy', 'sales', 'http', 'templates', 'static', 'permissions', 'admin', 'grill', 'workshop', 'control', 'kit'],
+  api: ['auth', 'audit', 'commands', 'catalog', 'db', 'errors', 'inventory', 'tenancy', 'sales', 'http', 'templates', 'static', 'permissions', 'admin', 'grill', 'workshop', 'control', 'support', 'kit'],
   static: [],
   permissions: [],
   admin: ['audit', 'auth', 'db', 'errors', 'http', 'kit', 'permissions'],
@@ -13,6 +13,7 @@ const ALLOWED: Record<string, string[]> = {
   workshop: ['audit','clock','commands','db','http','kit','sales'],
   kit: ['auth', 'db'],
   control: ['audit', 'db', 'http', 'kit'],
+  support: ['audit', 'auth', 'db', 'http', 'kit'],
   server: ['api', 'db'], migrate: ['bootstrap'], bootstrap: [],           // entrypoints: no business-module dependencies
   commands: ['db', 'errors'],
   tenancy: ['db', 'catalog', 'templates'],

@@ -39,7 +39,7 @@ export const newToken = () => {
   return { token, hash: sha(token) };
 };
 
-export interface SessionInfo { sessionId: string; userId: string; activeTenantId: string | null; name: string; email: string; isPlatformAdmin: boolean }
+export interface SessionInfo { sessionId: string; userId: string; activeTenantId: string | null; name: string; email: string; isPlatformAdmin: boolean; supportGrantId: string | null }
 export interface TenantMembership { tenant_id: string; name: string; slug: string; role_name: string; branch_ids: string[] }
 
 // identical error for unknown user / wrong password / locked / disabled account
@@ -69,8 +69,13 @@ export async function login(pool: pg.Pool, a: { email: string; password: string;
 export async function getSession(pool: pg.Pool, token: string): Promise<SessionInfo | null> {
   if (!/^tj_[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
   const r = (await pool.query('SELECT * FROM auth_get_session($1)', [sha(token)])).rows[0];
-  return r ? { sessionId: r.session_id, userId: r.user_id, activeTenantId: r.active_tenant_id, name: r.name, email: r.email, isPlatformAdmin: r.is_platform_admin } : null;
+  return r ? { sessionId: r.session_id, userId: r.user_id, activeTenantId: r.active_tenant_id, name: r.name, email: r.email, isPlatformAdmin: r.is_platform_admin, supportGrantId: r.support_grant_id ?? null } : null;
 }
+/** Enter a shop under an owner-approved support grant (checked in SQL: approved, not revoked, not expired, this admin). */
+export async function enterSupport(pool: pg.Pool, token: string, tenantId: string, grantId: string) {
+  return (await pool.query('SELECT auth_enter_support($1,$2,$3) AS ok', [sha(token), tenantId, grantId])).rows[0].ok as boolean;
+}
+export const leaveSupport = (pool: pg.Pool, token: string) => pool.query('SELECT auth_leave_support($1)', [sha(token)]);
 export const logout = (pool: pg.Pool, token: string) => pool.query('SELECT auth_revoke_session($1)', [sha(token)]);
 export async function switchTenant(pool: pg.Pool, token: string, tenantId: string) {
   return (await pool.query('SELECT auth_set_tenant($1,$2) AS ok', [sha(token), tenantId])).rows[0].ok as boolean;

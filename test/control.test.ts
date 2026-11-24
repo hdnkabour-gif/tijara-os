@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Api, createShop, key, platformAdmin, staff, startApp } from './api-helpers.js';
 import { owner, platform as platformPool, runtime as runtimePool } from './helpers.js';
@@ -29,7 +30,8 @@ describe('PR-B platform control center (metadata only)',()=>{
       expect.objectContaining({tenantId:A.tenantId,kind:'quota_full',detail:'items 4/4'})]));
     expect(['never','failed','stale','ok']).toContain(o.health.backup);
     expect([0,null]).toContain(o.health.pendingMigrations);   // null = this test server was not given the expected list (production server is)
-    expect(o.health.lastMigration.name).toMatch(/^012_/);
+    const newest=readdirSync('db/migrations').filter((f)=>f.endsWith('.sql')).sort().pop();
+    expect(o.health.lastMigration.name).toBe(newest);
   });
 
   it('CC3: the 360° card shows plan, usage, owners, roles, branches and history, but never the shop business data',async()=>{
