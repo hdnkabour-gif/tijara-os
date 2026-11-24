@@ -7,7 +7,7 @@ import type { Kit, Rc } from './kit.js';
 /**
  * PR-C: support access only with the shop OWNER's explicit, time-limited, revocable approval.
  * Platform side: ask (reason, duration, scope), see the answer, enter/leave. Shop side (owner only): approve - possibly
- * shorter or narrower - refuse, revoke at once. Every request made under a grant is journaled by authorize().
+ * shorter or narrower - refuse, revoke at once. The dispatcher journals requests and limits the support session to diagnostic metadata.
  */
 const platformOnly = (rc: Rc) => { if (!rc.session!.isPlatformAdmin) throw new HttpError(403, 'FORBIDDEN', 'platform administrators only'); };
 
@@ -37,6 +37,14 @@ export function registerSupportRoutes(k: Kit) {
     const ok = await authm.enterSupport(runtime, rc.token!, uuid(rc.body.tenantId, 'tenantId'), uuid(rc.body.grantId, 'grantId'));
     if (!ok) throw new HttpError(403, 'FORBIDDEN', 'no approved, unexpired access for you on this shop');
     return { body: { status: 'ok' } };
+  });
+  add('GET', '/support/diagnostics', 'session', async (rc) => {
+    const s = rc.session!;
+    if (!s.isPlatformAdmin || !s.activeTenantId || !s.supportGrantId)
+      throw new HttpError(403, 'FORBIDDEN', 'an active support grant is required');
+    const result = await platform.query('SELECT * FROM platform_support_diagnostics($1,$2,$3)', [s.userId,s.activeTenantId,s.supportGrantId]);
+    if (!result.rowCount) throw new HttpError(403, 'FORBIDDEN', 'support grant ended');
+    return { body: result.rows[0] };
   });
   add('POST', '/support/leave', 'session', async (rc) => {
     await authm.leaveSupport(runtime, rc.token!);

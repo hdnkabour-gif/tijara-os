@@ -137,9 +137,21 @@ describe('PR-C support access with the owner\'s explicit consent',()=>{
     expect(await snapshot()).toEqual(before);
   });
 
+  it('platform history projects administrative fields even for older audit entries',async()=>{
+    const A=await createShop(api,admin);
+    await owner.query("INSERT INTO platform_audit(actor_user_id,action,meta) VALUES ($1,'tenant.controls_changed',$2)",[admin.id,{
+      tenantId:A.tenantId,before:{plan:'basic',private:'private-sentinel'},after:{plan:'pro',private:'private-sentinel'},extra:'private-sentinel'
+    }]);
+    const feed=await api.call('GET',`/platform/audit?tenantId=${A.tenantId}`,as(admin.token));
+    expect(feed.status).toBe(200);
+    expect(JSON.stringify(feed.json)).not.toContain('private-sentinel');
+  });
+
   it('the platform database identity has no merchant table grants or RLS bypass',async()=>{
     const r=await platform.query(`SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user`);
     expect(r.rows[0]).toEqual({rolsuper:false,rolbypassrls:false});
+    expect((await platform.query("SELECT has_column_privilege(current_user,'users','email','SELECT') AS allowed")).rows[0].allowed).toBe(false);
+    expect((await platform.query("SELECT has_table_privilege(current_user,'platform_admins','INSERT') AS allowed")).rows[0].allowed).toBe(false);
     for(const table of ['customers','items','invoices','payments','stock_movements','audit_log']){
       const p=await platform.query(`SELECT has_table_privilege(current_user,$1,'SELECT,UPDATE,INSERT,DELETE') AS access`,[table]);
       expect(p.rows[0].access,table).toBe(false);
