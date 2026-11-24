@@ -15,7 +15,15 @@ alert() {   # message only: no URLs with credentials, no passphrase
   [ -n "${ALERT_WEBHOOK_URL:-}" ] && curl -fsS -m 15 -X POST -H 'Content-Type: application/json' \
     -d "{\"text\":\"Tijara OS backup FAILED: $1\"}" "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
 }
-fail() { echo "backup failed: $1" >&2; alert "$1"; exit 1; }
+# Record the outcome in the database (platform_backup_events) so the Control Center shows what really happened.
+# Values travel as psql variables (:'x'), never spliced into SQL. Best effort: a recording problem never hides the backup result.
+DEST_KIND="${BACKUP_DEST%%:*}"
+record() {   # record <true|false> <json detail>
+  "${PG_BIN:+$PG_BIN/}psql" --dbname="$BACKUP_DATABASE_URL" -qAt -v ON_ERROR_STOP=1 -v ok="$1" -v detail="$2" >/dev/null 2>&1 <<'SQL' || echo "warning: could not record the backup status" >&2
+SELECT platform_record_backup('backup', :'ok'::boolean, :'detail'::jsonb);
+SQL
+}
+fail() { echo "backup failed: $1" >&2; alert "$1"; record false "{\"dest\":\"$DEST_KIND\",\"error\":\"$(printf '%s' "$1" | tr -cd '[:alnum:] ._()-')\"}"; exit 1; }
 trap 'fail "step failed near line $LINENO"' ERR
 [ "${#BACKUP_PASSPHRASE}" -ge 24 ] || fail "BACKUP_PASSPHRASE shorter than 24 characters"
 
@@ -42,5 +50,6 @@ ITEMS="$(openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_PASSP
 put "$WORK/$NAME" "$NAME"; put "$WORK/$NAME.sha256" "$NAME.sha256"
 get "$NAME" "$WORK/readback"; [ "$(sha256sum "$WORK/readback" | cut -d' ' -f1)" = "$SUM" ] || fail "read-back checksum mismatch after upload"
 echo "backup ok: $NAME ($(stat -c %s "$WORK/$NAME") bytes, $ITEMS tables, sha256 ${SUM:0:12}…)"
+record true "{\"dest\":\"$DEST_KIND\",\"name\":\"$NAME\",\"bytes\":$(stat -c %s "$WORK/$NAME"),\"tables\":$ITEMS}"
 # 4) retention (never deletes the newest 3 backups)
 list | grep -E '^tijara-[0-9]{8}T[0-9]{6}Z\.dump\.enc$' | "$HERE/retention.sh" | while read -r old; do del "$old"; del "$old.sha256"; echo "pruned: $old"; done

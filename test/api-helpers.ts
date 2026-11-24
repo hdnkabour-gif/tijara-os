@@ -24,7 +24,7 @@ export async function startApp(production = false) {
     try { json = JSON.parse(text); } catch { /* keep null */ }
     return { status: r.status, json, headers: r.headers };
   };
-  return { server, call, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { server, base, call, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 export type Api = Awaited<ReturnType<typeof startApp>>;
 

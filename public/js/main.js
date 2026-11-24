@@ -1,15 +1,15 @@
 import { getLang, setLang, t } from './i18n.js';
 import { api, clear, friendly, h, toast } from './lib.js';
 import { forgotView, loginView, resetView, tenantPicker } from './auth-views.js';
-import { platformView } from './platform.js';
 import { customersView, dashboardView, invoicesView, itemsView, stockView } from './shop-views.js';
 import { invoiceView, journalView, rolesView, settingsView, teamView } from './admin-views.js';
 import { posView } from './pos.js';
 import { grillView, suppliersView, cashView, transformsView } from './grill-views.js';
 import { vehiclesView, workshopView, workshopRemindersView } from './workshop-views.js';
+import { applyBranding, overviewView, planView, platformAuditView, shop360View, shopsView } from './control-views.js';
 
 const root = document.getElementById('app');
-const S = { me: null, tenant: null, branches: [], route: '' };
+const S = { me: null, tenant: null, branches: [], branding: null, route: '' };
 export const state = S;
 
 const can = (p) => S.me?.permissions?.includes(p);
@@ -31,8 +31,15 @@ const ROUTES = [
   { path: 'roles', label: 'nav_roles', show: () => can('users.manage'), view: rolesView },
   { path: 'settings', label: 'nav_settings', show: () => can('settings.manage') || can('branches.manage'), view: settingsView },
   { path: 'journal', label: 'nav_journal', show: () => can('audit.view'), view: journalView },
+  { path: 'plan', label: 'nav_plan', show: () => true, view: planView },
   { path: 'invoice', label: 'invoiceTitle', show: () => can('sale.view'), view: invoiceView, hidden: true },
-  { path: 'platform', label: 'nav_platform', show: () => S.me?.isPlatformAdmin, view: platformView },
+];
+/** The platform has its OWN shell, menu and theme: it never shares navigation with a shop. */
+const PLATFORM_ROUTES = [
+  { path: 'platform', label: 'p_overview', view: overviewView },
+  { path: 'platform-shops', label: 'p_shops', view: shopsView },
+  { path: 'platform-audit', label: 'p_audit', view: platformAuditView },
+  { path: 'platform-shop', label: 'p_shops', view: shop360View, hidden: true },
 ];
 
 function parseHash() {
@@ -47,7 +54,8 @@ async function boot() {
   if (S.me?.activeTenantId) {
     try { S.tenant = await api('GET', '/tenant'); } catch { S.tenant = null; }
     try { S.branches = (await api('GET', '/branches')).branches; } catch { S.branches = []; }
-  } else { S.tenant = null; S.branches = []; }
+    try { S.branding = await api('GET', '/tenant/branding'); } catch { S.branding = null; }
+  } else { S.tenant = null; S.branches = []; S.branding = null; }
   render();
 }
 
@@ -71,12 +79,14 @@ async function render() {
   if (path === 'reset') return void root.appendChild(publicShell(resetView(query.get('token') ?? '', () => go('login'))));
   if (path === 'forgot') return void root.appendChild(publicShell(forgotView()));
   if (!S.me) return void root.appendChild(publicShell(loginView(async () => { go(''); await boot(); })));
+  // a platform admin lands in the Control Center; a shop opens only on an explicit shop route (e.g. after choosing it)
+  if (S.me.isPlatformAdmin && (path === '' || path.startsWith('platform') || !S.me.activeTenantId)) return platformShell(path, query);
   if (!S.me.activeTenantId && S.me.tenants.length > 1) {
     return void root.appendChild(publicShell(tenantPicker(S.me.tenants, async (id) => {
       try { await api('POST', '/auth/switch-tenant', { tenantId: id }); await boot(); } catch (e) { toast(friendly(e), true); }
     })));
   }
-  if (['suspended','trial_expired'].includes(S.tenant?.status) && !(S.me.isPlatformAdmin && path === 'platform')) {
+  if (['suspended','trial_expired'].includes(S.tenant?.status)) {
     const isAr = getLang() === 'ar';
     const controls = [h('button', { class: 'btn', type: 'button', onclick: logout }, t('logout'))];
     if (S.me.isPlatformAdmin) controls.push(h('button',{class:'btn primary',type:'button',onclick:()=>go('platform')},isAr?'إدارة المحلات':'Gestion plateforme'));
@@ -102,29 +112,66 @@ async function render() {
     history.replaceState(null, '', `#/${current.path}`);
     S.route = current.path;
   }
+  applyBranding(S.branding);                                    // the shop's own colors, shop shell only
+  const logo = S.branding?.hasLogo
+    ? h('img', { class: 'brandmark brand-logo', alt: '', src: `/tenant/logo?v=${S.branding.version}` })
+    : h('span', { class: 'brandmark', 'aria-hidden': 'true' }, (S.tenant?.name ?? 'ت').trim().charAt(0).toUpperCase());
   const main = h('main', { id: 'main' }, h('p', { class: 'muted' }, t('loading')));
-  root.appendChild(h('div', { class: 'shell workspace' },
+  root.appendChild(h('div', { class: 'shell workspace theme-shop' },
     h('div', { class: 'topbar' },
-      h('div', { class: 'brand-lockup' },
-        h('span', { class: 'brandmark', 'aria-hidden': 'true' }, 'ت'),
+      h('div', { class: 'brand-lockup' }, logo,
         h('div', { class: 'brand-copy' },
-          h('strong', { class: 'brand-title' }, t('app')),
-          h('span', { class: 'brand-context' }, S.tenant?.name ?? t('platform')))),
+          h('strong', { class: 'brand-title', id: 'shop-name' }, S.tenant?.name ?? t('app')),
+          h('span', { class: 'brand-context' }, `${t('app')} · ${S.me.user.name}`))),
       h('div', { class: 'topbar-actions' },
         h('span', { class: 'environment-badge' }, t('demoBadge')),
+        S.me.isPlatformAdmin && h('button', { type: 'button', id: 'to-control-center', onclick: () => go('platform') }, t('controlCenter')),
         langToggle(),
         h('button', { type: 'button', onclick: logout }, t('logout')))),
     h('nav', { class: 'nav', 'aria-label': 'navigation' },
       h('span', { class: 'nav-section-label' }, t('workspaceNav')),
       visible.filter((r) => !r.hidden).map((r) => h('a', { href: `#/${r.path}`, ...(r.path === current.path ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
     main));
+  await mount(main, current, query);
+}
+
+async function mount(main, route, query) {
   try {
-    const view = await current.view(S, query);
+    const view = await route.view(S, query);
     clear(main); main.appendChild(view);
   } catch (e) {
     if (e?.status === 401) { S.me = null; return render(); }
     clear(main); main.appendChild(h('div', { class: 'error', role: 'alert' }, friendly(e)));
   }
+}
+
+/** TIJARA OS Control Center: navy technical shell for platform administrators, metadata only. */
+async function platformShell(path, query) {
+  applyBranding(null);                                          // a shop's colors never leak into the platform
+  let current = PLATFORM_ROUTES.find((r) => r.path === path);
+  if (!current) { current = PLATFORM_ROUTES[0]; history.replaceState(null, '', '#/platform'); }
+  const navPath = current.path === 'platform-shop' ? 'platform-shops' : current.path;
+  const myShops = S.me.tenants ?? [];
+  const main = h('main', { id: 'main' }, h('p', { class: 'muted' }, t('loading')));
+  root.appendChild(h('div', { class: 'shell workspace theme-platform' },
+    h('div', { class: 'topbar' },
+      h('div', { class: 'brand-lockup' },
+        h('span', { class: 'brandmark', 'aria-hidden': 'true' }, 'T'),
+        h('div', { class: 'brand-copy' },
+          h('strong', { class: 'brand-title' }, 'TIJARA OS'),
+          h('span', { class: 'brand-context' }, t('controlCenter')))),
+      h('div', { class: 'topbar-actions' },
+        myShops.length > 0 && h('select', { id: 'open-my-shop', 'aria-label': t('myShops'), onchange: async (e) => {
+          if (!e.target.value) return;
+          try { await api('POST', '/auth/switch-tenant', { tenantId: e.target.value }); location.hash = '#/dashboard'; await boot(); } catch (ex) { toast(friendly(ex), true); }
+        } }, h('option', { value: '' }, t('myShops')), myShops.map((m) => h('option', { value: m.tenant_id }, m.name))),
+        langToggle(),
+        h('button', { type: 'button', onclick: logout }, t('logout')))),
+    h('nav', { class: 'nav', 'aria-label': 'navigation' },
+      h('span', { class: 'nav-section-label' }, t('controlCenter')),
+      PLATFORM_ROUTES.filter((r) => !r.hidden).map((r) => h('a', { href: `#/${r.path}`, ...(r.path === navPath ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
+    main));
+  await mount(main, current, query);
 }
 
 window.addEventListener('hashchange', render);

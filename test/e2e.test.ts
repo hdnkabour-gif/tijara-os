@@ -19,6 +19,9 @@ async function newPage(opts: { mobile?: boolean; locale?: string } = {}) {
     locale: opts.locale ?? 'fr-FR',
     viewport: opts.mobile ? { width: 375, height: 812 } : { width: 1280, height: 800 },
     hasTouch: Boolean(opts.mobile), isMobile: Boolean(opts.mobile), deviceScaleFactor: 1,
+    // each browser is a different client (the test server trusts the proxy header): the per-IP login limit (30 / 15 min)
+    // stays real for each of them instead of counting every browser of the whole file as one address
+    extraHTTPHeaders: { 'x-forwarded-for': `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}` },
   });
   const page = await ctx.newPage();
   page.setDefaultTimeout(8000);
@@ -39,6 +42,8 @@ async function uiLogin(page: P, email: string, password = PW) {
   await page.click('button[type=submit]');
 }
 const shot=async(pg:P,name:string)=>{ if(process.env.SHOTS)await pg.screenshot({path:`${process.env.SHOTS}/${name}.png`}); };
+// the platform admin lands on the Control Center overview; the shop list is its own page
+const toShops = async (page: P, ar = false) => { await page.locator('nav.nav').getByRole('link', { name: ar ? 'المحلات' : 'Commerces', exact: true }).click(); };
 const text = (page: P, sel: string) => page.locator(sel).first().innerText();
 // the word "false"/"undefined"/"null" printed in the page means a rendering bug leaked a JS value
 const noLeaks = async (page: P) => expect(await page.evaluate(() => document.body.innerText)).not.toMatch(/\b(false|undefined|null|NaN|\[object)\b/);
@@ -51,6 +56,7 @@ describe('web UI in a real browser', () => {
     await page.route('**/platform/tenants', (route: any) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tenants: [] }) }));
     await uiLogin(page, admin.email);
+    await toShops(page);
     await page.waitForSelector('.platform-empty');
     expect(await page.getByRole('heading', { name: /premier établissement/i }).isVisible()).toBe(true);
     expect((await page.locator('.overview-strip .v').first().innerText()).trim()).toBe('0');
@@ -65,9 +71,12 @@ describe('web UI in a real browser', () => {
     await mobile.page.route('**/platform/tenants', (route: any) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tenants: [] }) }));
     await uiLogin(mobile.page, admin.email);
+    await toShops(mobile.page, true);
     await mobile.page.waitForSelector('.platform-empty');
     expect(await mobile.page.locator('html').getAttribute('dir')).toBe('rtl');
-    expect(await mobile.page.locator('.workspace .nav a').count()).toBe(1);
+    // the platform menu is its own: overview, shops, platform journal; no shop page (POS, stock...) appears in it
+    expect(await mobile.page.locator('.workspace .nav a').allInnerTexts()).toEqual(['نظرة عامة','المحلات','سجل المنصة']);
+    expect(await mobile.page.locator('.workspace.theme-platform').count()).toBe(1);
     const fits = await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     expect(fits).toBe(true);
     expect([...problems, ...mobile.problems]).toEqual([]);
@@ -180,6 +189,7 @@ describe('web UI in a real browser', () => {
     const shop=await createShop(api,admin,'pro','Suspension UI Pilot',['grocery']);
     const {ctx,page,problems}=await newPage();
     await uiLogin(page,admin.email);
+    await toShops(page);
     await page.waitForSelector('tr:has-text("Suspension UI Pilot")');
     const row=page.locator('tr:has-text("Suspension UI Pilot")');
     await row.getByRole('button',{name:'Gérer'}).click();
@@ -187,6 +197,9 @@ describe('web UI in a real browser', () => {
     await page.fill('#tenant-reason','Maintenance temporaire');
     await page.locator('.modal button[type=submit]').click();
     await page.waitForSelector('tr:has-text("Suspension UI Pilot") >> text=Suspendu');
+    // the refreshed list is still the Control Center list: search/filters and the 360° link survive the edit
+    expect(await page.locator('#shop-search').count()).toBe(1);
+    expect(await page.locator('tr:has-text("Suspension UI Pilot")').getByRole('link',{name:'Suspension UI Pilot'}).count()).toBe(1);
     expect((await api.call('GET','/items',{token:shop.ownerToken})).status).toBe(423);
     await page.locator('tr:has-text("Suspension UI Pilot")').getByRole('button',{name:'Gérer'}).click();
     await page.locator('#tenant-status').selectOption('active');
@@ -201,7 +214,7 @@ describe('web UI in a real browser', () => {
     const { ctx, page, problems } = await newPage();
     // 1) platform administrator creates the shop through the UI
     await uiLogin(page, admin.email);
-    await page.waitForSelector('text=Plateforme');
+    await toShops(page);
     const slug = uniq('butcher').toLowerCase();
     await page.getByRole('button', { name: /Nouvel établissement/ }).click();
     await page.fill('#sn', 'Butcher E2E'); await page.fill('#ss', slug);
@@ -276,7 +289,7 @@ describe('web UI in a real browser', () => {
   it('E1b: platform admin creates pilot shop with their own account and opens its dashboard without another password', async () => {
     const { ctx, page, problems } = await newPage();
     await uiLogin(page, admin.email);
-    await page.waitForSelector('text=Plateforme');
+    await toShops(page);
     const slug = uniq('pilotui').toLowerCase();
     await page.getByRole('button', { name: /Nouvel établissement/ }).click();
     await page.fill('#sn', 'Pilot Butcher');
@@ -722,4 +735,69 @@ describe('web UI in a real browser', () => {
     expect(mobile.problems).toEqual([]);
     await mobile.ctx.close();
   }, 60_000);
+  it('E19: the Control Center (navy, metadata only) and the shop workspace (its own colors and logo) are two separate products', async () => {
+    // its own platform admin: the shared one already logged in many times in this file (login rate limit)
+    const ccAdmin=await platformAdmin(api);
+    const A=await createShop(api,admin,'pro','Atelier Bleu E2E',['butcher']);
+    await api.call('POST','/customers',{token:A.ownerToken,body:{name:'Client Confidentiel'}});
+    await api.call('PATCH',`/platform/tenants/${A.tenantId}/controls`,{token:admin.token,body:{limits:{max_items:4}}});   // 4/4 items: an alert
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,ccAdmin.email);
+    await page.locator('#platform-overview').waitFor();
+    expect(await page.locator('.workspace.theme-platform').count()).toBe(1);
+    await page.locator('#platform-alerts').getByRole('link',{name:'Atelier Bleu E2E'}).first().waitFor();
+    expect(await page.locator('#backup-state').innerText()).toMatch(/sauvegarde|Sauvegarde/);   // the state recorded by real backup runs
+    await shot(page,'e19-platform-overview');
+    await toShops(page);
+    await page.fill('#shop-search','Atelier Bleu');
+    expect(await page.locator('tbody tr:not([hidden])').count()).toBe(1);
+    await page.locator('tbody tr:not([hidden])').getByRole('link',{name:'Atelier Bleu E2E'}).click();
+    await page.locator('#shop-360').waitFor();
+    await page.locator('#card-usage [data-usage=items]').getByText('4 / 4').waitFor();
+    expect(await page.locator('#card-people').innerText()).toContain(A.ownerEmail);
+    expect(await page.locator('body').innerText()).not.toContain('Client Confidentiel');
+    await shot(page,'e19-shop-360');
+    await page.locator('nav.nav').getByRole('link',{name:'Journal plateforme'}).click();
+    await page.locator('#platform-audit').getByText('Abonnement / accès modifié').first().waitFor();
+    expect(problems).toEqual([]);
+    await ctx.close();
+
+    // the shop owner sets red/gold colors and a logo: the shop workspace takes them, the platform never does
+    const shopPage=await newPage();
+    await uiLogin(shopPage.page,A.ownerEmail);
+    await shopPage.page.locator('nav.nav').getByRole('link',{name:'Paramètres'}).click();
+    await shopPage.page.locator('#branding-card').waitFor();
+    await shopPage.page.fill('#brand-primary','#b91c1c');
+    await shopPage.page.locator('#save-colors').click();
+    await shopPage.page.waitForFunction(()=>getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()==='#b91c1c');
+    await shopPage.page.locator('#branding-card').waitFor();
+    await shopPage.page.setInputFiles('#brand-logo',{name:'logo.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64')});
+    await shopPage.page.locator('#upload-logo').click();
+    await shopPage.page.locator('.workspace.theme-shop img.brand-logo').waitFor();
+    expect(await shopPage.page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--brand').trim())).toBe('#b91c1c');
+    await shopPage.page.locator('nav.nav').getByRole('link',{name:'Ma formule'}).click();
+    await shopPage.page.locator('#plan-usage [data-usage=items]').getByText('4 / 4').waitFor();
+    await shot(shopPage.page,'e19-ma-formule');
+    expect(shopPage.problems).toEqual([]);
+    await shopPage.ctx.close();
+
+    // Arabic phone: "Ma formule" fits, and the admin's Control Center keeps its own colors
+    const mobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(mobile.page,A.ownerEmail);
+    await mobile.page.locator('nav.nav').getByRole('link',{name:'باقتي'}).click();
+    await mobile.page.locator('#my-plan').waitFor();
+    expect(await mobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await shot(mobile.page,'e19-ma-formule-mobile-ar');
+    await mobile.ctx.close();
+    const adminMobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(adminMobile.page,ccAdmin.email);
+    await adminMobile.page.locator('#platform-overview').waitFor();
+    expect(await adminMobile.page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--brand').trim())).not.toBe('#b91c1c');
+    await adminMobile.page.goto(`${base}/app/#/platform-shop?id=${A.tenantId}`);
+    await adminMobile.page.locator('#shop-360').waitFor();
+    expect(await adminMobile.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await shot(adminMobile.page,'e19-shop-360-mobile-ar');
+    expect(adminMobile.problems).toEqual([]);
+    await adminMobile.ctx.close();
+  }, 90_000);
 });

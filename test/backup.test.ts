@@ -52,6 +52,13 @@ describe('backup job: verified, encrypted, alerting', () => {
     const r = run('backup-job.sh', [], { BACKUP_DATABASE_URL: URL_, BACKUP_PASSPHRASE: PASS, BACKUP_DEST: `file:${dest}` });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/backup ok: tijara-\d{8}T\d{6}Z\.dump\.enc/);
+    // the outcome is recorded for the Control Center (what really happened, not a configuration flag)
+    const rec = new pg.Client({ connectionString: URL_ }); await rec.connect();
+    const lastEv = (await rec.query("SELECT ok, detail FROM platform_backup_events WHERE kind='backup' ORDER BY id DESC LIMIT 1")).rows[0];
+    expect(lastEv.ok).toBe(true);
+    expect(lastEv.detail).toMatchObject({ dest: 'file', name: expect.stringMatching(/^tijara-.*\.dump\.enc$/) });
+    expect(JSON.stringify(lastEv.detail)).not.toContain(PASS);
+    await rec.end();
     expect(r.stdout + r.stderr).not.toContain(PASS);
     const files = readdirSync(dest), enc = files.find((f) => f.endsWith('.enc'))!;
     expect(files).toContain(`${enc}.sha256`);
@@ -84,9 +91,16 @@ describe('backup job: verified, encrypted, alerting', () => {
     const hook = `http://127.0.0.1:${(srv.address() as any).port}/hook`;
     // 3 params: broken database, weak passphrase
     const a = await runAsync('backup-job.sh', { BACKUP_DATABASE_URL: `postgres://backup_admin:backup_dev_pw@${host}/does_not_exist_db`, BACKUP_PASSPHRASE: PASS, BACKUP_DEST: `file:${path.join(tmp, 'fail1')}`, ALERT_WEBHOOK_URL: hook });
-    const b = await runAsync('backup-job.sh', { BACKUP_DATABASE_URL: URL_, BACKUP_PASSPHRASE: 'short', BACKUP_DEST: `file:${path.join(tmp, 'fail2')}`, ALERT_WEBHOOK_URL: hook });
+    const b = await runAsync('backup-job.sh', { BACKUP_DATABASE_URL: URL_, BACKUP_PASSPHRASE: 'Weak9Qz', BACKUP_DEST: `file:${path.join(tmp, 'fail2')}`, ALERT_WEBHOOK_URL: hook });
     srv.close();
     expect(a.status).not.toBe(0); expect(b.status).not.toBe(0);
+    // the weak-passphrase failure (database reachable) is recorded as a FAILED backup, without the passphrase
+    const rec2 = new pg.Client({ connectionString: URL_ }); await rec2.connect();
+    const failed = (await rec2.query("SELECT ok, detail FROM platform_backup_events WHERE kind='backup' ORDER BY id DESC LIMIT 1")).rows[0];
+    expect(failed.ok).toBe(false);
+    expect(failed.detail.error).toMatch(/BACKUP_PASSPHRASE shorter/);
+    expect(JSON.stringify(failed.detail)).not.toContain('Weak9Qz');
+    await rec2.end();
     expect(got).toHaveLength(2);
     for (const body of got) { expect(JSON.parse(body).text).toMatch(/Tijara OS backup FAILED/); expect(body).not.toContain(PASS); expect(body).not.toContain('backup_dev_pw'); }
     expect(() => readdirSync(path.join(tmp, 'fail1')).filter((f) => f.endsWith('.enc'))).not.toThrow();
