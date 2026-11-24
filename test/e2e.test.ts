@@ -751,7 +751,7 @@ describe('web UI in a real browser', () => {
     const ccAdmin=await platformAdmin(api);
     const A=await createShop(api,admin,'pro','Atelier Bleu E2E',['butcher']);
     await api.call('POST','/customers',{token:A.ownerToken,body:{name:'Client Confidentiel'}});
-    await api.call('PATCH',`/platform/tenants/${A.tenantId}/controls`,{token:admin.token,body:{limits:{max_items:4}}});   // 4/4 items: an alert
+    await api.call('PATCH',`/platform/tenants/${A.tenantId}/controls`,{token:admin.token,body:{limits:{max_items:9}}});   // 9/9 items (butcher template): an alert
     const {ctx,page,problems}=await newPage();
     await uiLogin(page,ccAdmin.email);
     await page.locator('#platform-overview').waitFor();
@@ -764,7 +764,7 @@ describe('web UI in a real browser', () => {
     expect(await page.locator('tbody tr:not([hidden])').count()).toBe(1);
     await page.locator('tbody tr:not([hidden])').getByRole('link',{name:'Atelier Bleu E2E'}).click();
     await page.locator('#shop-360').waitFor();
-    await page.locator('#card-usage [data-usage=items]').getByText('4 / 4').waitFor();
+    await page.locator('#card-usage [data-usage=items]').getByText('9 / 9').waitFor();
     expect(await page.locator('#card-people').innerText()).toContain(A.ownerEmail);
     expect(await page.locator('body').innerText()).not.toContain('Client Confidentiel');
     await shot(page,'e19-shop-360');
@@ -787,7 +787,7 @@ describe('web UI in a real browser', () => {
     await shopPage.page.locator('.workspace.theme-shop img.brand-logo').waitFor();
     expect(await shopPage.page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--brand').trim())).toBe('#b91c1c');
     await shopPage.page.locator('nav.nav').getByRole('link',{name:'Ma formule'}).click();
-    await shopPage.page.locator('#plan-usage [data-usage=items]').getByText('4 / 4').waitFor();
+    await shopPage.page.locator('#plan-usage [data-usage=items]').getByText('9 / 9').waitFor();
     await shot(shopPage.page,'e19-ma-formule');
     expect(shopPage.problems).toEqual([]);
     await shopPage.ctx.close();
@@ -921,4 +921,62 @@ describe('web UI in a real browser', () => {
     expect(mobile.problems).toEqual([]);
     await mobile.ctx.close();
   }, 90_000);
+  it('E22: the owner publishes a menu with a real photo; a customer on an Arabic phone orders with options, sees the server price and follows it privately', async () => {
+    const shop=await createShop(api,admin,'pro','Menu public E2E',['butcher','grill']);
+    const items=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
+    const beef=items.find((i:any)=>i.sku==='BUT-BOEUF'), grill=items.find((i:any)=>i.sku==='GRL-CUISSON');
+    await api.call('POST','/stock/receive',{token:shop.ownerToken,headers:{'idempotency-key':key()},body:{branchId:shop.branchId,itemId:beef.id,qty:10,unitCost:80}});
+    await api.call('PATCH',`/items/${beef.id}`,{token:shop.ownerToken,body:{orderable:true}});
+    await api.call('PUT',`/items/${beef.id}/options`,{token:shop.ownerToken,body:{groups:[{name:'Préparation',required:true,choices:[{label:'Nature'},{label:'Grillé',addItemId:grill.id}]}]}});
+    // 1) the owner: card + photo upload (re-encoded in the browser), publish with hours, QR shown
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,shop.ownerEmail);
+    await page.locator('nav.nav').getByRole('link',{name:'Menu en ligne'}).click();
+    await page.locator(`tr[data-item="${beef.id}"] [data-action=card]`).click();
+    await page.fill('#dc-cat','Viandes'); await page.fill('#dc-desc','Bœuf frais, découpé à la demande'); await page.fill('#dc-serves','2');
+    const {png}=await import('./media-fixtures.js');
+    await page.setInputFiles('#dc-photo',{name:'boeuf.png',mimeType:'image/png',buffer:png(320,240,'GPS secret')});
+    await page.locator('#dc-media .media-tile img').waitFor();
+    await page.locator('.modal button[type=submit]').click();
+    await page.locator('#mn-pub').check(); await page.locator('#mn-acc').check();
+    await page.fill('#mn-prep','0');
+    for(const d of [0,1,2,3,4,5,6]){ await page.fill(`#mn-h-${d}-0-o`,'00:00'); await page.fill(`#mn-h-${d}-0-c`,'23:59'); }
+    await page.locator('#menu-settings button[type=submit]').click();
+    await page.locator('#qr-box img').waitFor();
+    const menuUrl=await page.locator('#menu-link').getAttribute('href');
+    expect(problems).toEqual([]);
+    await ctx.close();
+    // 2) the customer, Arabic phone, no account
+    const cust=await newPage({mobile:true,locale:'ar-MA'});
+    await cust.page.goto(menuUrl!);
+    await cust.page.locator(`[data-item="${beef.id}"] .dish-photo`).waitFor();
+    await fitsPhone(cust.page);
+    await shot(cust.page,'e22-menu-mobile-ar');
+    await cust.page.waitForTimeout(3200);                                          // the server refuses forms filled in under 3 s
+    await cust.page.locator(`[data-item="${beef.id}"] [data-action=add]`).click();
+    await cust.page.locator('.option-group').getByText('Grillé').click();
+    await cust.page.fill('#cfg-qty','1.5');
+    await cust.page.locator('#cfg-price').filter({hasText:'210'}).waitFor();        // 1.5 x 120 + 1.5 x 20, from the server
+    await cust.page.locator('#cfg-add').click();
+    await cust.page.locator('#open-cart').click();
+    await cust.page.locator('#co-total').filter({hasText:'210'}).waitFor();
+    await cust.page.fill('#co-name','زبون تجريبي'); await cust.page.fill('#co-phone','0600000009');
+    await fitsPhone(cust.page);
+    await shot(cust.page,'e22-checkout-mobile-ar');
+    await cust.page.locator('#co-send').click();
+    await cust.page.waitForURL(/track\.html#/);
+    await cust.page.locator('.steps li.current').waitFor();
+    const trackText=await cust.page.locator('main').innerText();
+    expect(trackText).not.toMatch(/زبون تجريبي|0600000009/);                     // no name, no phone on the tracking page
+    await fitsPhone(cust.page);
+    await shot(cust.page,'e22-track-mobile-ar');
+    // 3) staff accept it: the customer's page shows the new step
+    const req=(await api.call('GET',`/order-requests?branchId=${shop.branchId}&status=pending`,{token:shop.ownerToken})).json.requests[0];
+    expect(req).toMatchObject({channel:'web',customer_name:'زبون تجريبي'});
+    await api.call('POST',`/order-requests/${req.id}/accept`,{token:shop.ownerToken,headers:{'idempotency-key':key()},body:{}});
+    await cust.page.locator('button.btn').last().click();
+    await cust.page.locator('.steps li.current').filter({hasText:'مقبولة'}).waitFor();
+    expect(cust.problems).toEqual([]);
+    await cust.ctx.close();
+  }, 120_000);
 });

@@ -109,7 +109,7 @@ export function openControls(shop,plans,done){
     ['kitchen',txt('Cuisine / grill','المطبخ والمشوي')],['workshop',txt('Atelier mécanique','ورشة الميكانيك')],
     ['purchases',txt('Achats / fournisseurs','المشتريات والموردون')],['cash',txt('Clôture de caisse','إغلاق الصندوق')],
     ['production',txt('Transformation','تحويل اللحوم')],['bookings',txt('Commandes / réservations','الطلبات والحجوزات')],
-    ['delivery',txt('Livraison','التوصيل')]
+    ['delivery',txt('Livraison','التوصيل')],['online',txt('Menu & commandes en ligne','القائمة والطلب عبر الإنترنت')]
   ].map(([key,label])=>{
     const v=shop.feature_overrides?.[key];
     const input=h('select',{id:'feature-'+key},

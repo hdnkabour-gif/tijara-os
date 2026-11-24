@@ -21,13 +21,13 @@ describe('PR-B platform control center (metadata only)',()=>{
   it('CC2: the overview counts real shops and raises alerts from real states (suspension, full quota)',async()=>{
     const A=await createShop(api,admin,'pro','Overview A',['butcher']),B=await createShop(api,admin,'basic','Overview B',['mechanic']);
     expect((await controls(B.tenantId,{status:'suspended',reason:'Unpaid test invoice'})).status).toBe(200);
-    expect((await controls(A.tenantId,{limits:{max_items:4}})).status).toBe(200);   // the butcher template has 4 items: 100 %
+    expect((await controls(A.tenantId,{limits:{max_items:9}})).status).toBe(200);   // the butcher template has 9 items: 100 %
     const o=(await api.call('GET','/platform/overview',as(admin.token))).json;
     expect(o.shops).toBeGreaterThanOrEqual(2);
     expect(o.byStatus.suspended).toBeGreaterThanOrEqual(1);
     expect(o.alerts).toEqual(expect.arrayContaining([
       expect.objectContaining({tenantId:B.tenantId,kind:'suspended',detail:'Unpaid test invoice'}),
-      expect.objectContaining({tenantId:A.tenantId,kind:'quota_full',detail:'items 4/4'})]));
+      expect.objectContaining({tenantId:A.tenantId,kind:'quota_full',detail:'items 9/9'})]));
     expect(['never','failed','stale','ok']).toContain(o.health.backup);
     expect([0,null]).toContain(o.health.pendingMigrations);   // null = this test server was not given the expected list (production server is)
     const newest=readdirSync('db/migrations').filter((f)=>f.endsWith('.sql')).sort().pop();

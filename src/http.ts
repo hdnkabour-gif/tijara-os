@@ -1,4 +1,5 @@
 import type http from 'node:http';
+import { Readable } from 'node:stream';
 
 export class HttpError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -26,7 +27,28 @@ export async function readJson(req: http.IncomingMessage): Promise<any> {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw bad('invalid JSON'); }
 }
 
+/** Raw upload body (photos, videos): bounded, never parsed; the route declares its own limit. */
+export async function readRaw(req: http.IncomingMessage, max: number): Promise<Buffer> {
+  const declared = Number(req.headers['content-length'] ?? 0);
+  if (declared > max) { req.resume(); throw new HttpError(413, 'TOO_LARGE', `file larger than ${Math.round(max / 1_000_000 * 10) / 10} MB`); }
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > max) { req.destroy(); throw new HttpError(413, 'TOO_LARGE', 'file too large'); }
+    chunks.push(c as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 export function send(res: http.ServerResponse, status: number, body: unknown, extra: Record<string, string | string[]> = {}) {
+  if (body instanceof Readable) {                                  // a stored file (media), streamed, never buffered whole
+    res.writeHead(status, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', ...extra,
+      'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer',
+      'content-security-policy': "default-src 'none'; frame-ancestors 'none'; sandbox", 'strict-transport-security': 'max-age=31536000; includeSubDomains' });
+    body.on('error', () => res.destroy());
+    body.pipe(res);
+    return;
+  }
   const binary = Buffer.isBuffer(body);
   const fixed = {
     'x-content-type-options': 'nosniff',

@@ -15,7 +15,7 @@ const L = {
     accepted: 'Commande acceptée', options: 'Options', orderable: 'Commandable', choose: 'Choisir…', required: 'obligatoire',
     optTitle: 'Options du produit', optIntro: 'Exemple : « Préparation » (Nature, Grillé) et « Épices » (Avec, Sans). Une option peut ajouter un autre produit ou service (ex. Grillé ajoute la cuisson au kg) : son prix vient de ce produit.',
     group: 'Nom de l’option', multiple: 'Plusieurs choix possibles', addGroup: 'Ajouter une option', choice: 'Choix', addChoice: 'Ajouter un choix',
-    pay: 'Encaisser', pm_cash: 'espèces', pm_card: 'carte', pm_transfer: 'virement', paid: 'Encaissée : facture émise', inKitchen: 'En cuisine : encaisser quand elle est prête',
+    perFixed: 'portion fixe', portion: 'Portion (kg ou unités)', pay: 'Encaisser', pm_cash: 'espèces', pm_card: 'carte', pm_transfer: 'virement', paid: 'Encaissée : facture émise', inKitchen: 'En cuisine : encaisser quand elle est prête',
     cancelOrder: 'Annuler la commande', os_closed: 'Encaissée', os_cancelled: 'Annulée (stock libéré)',
     saveOptions: 'Enregistrer', adds: 'Ajoute', nothing: 'Rien (simple précision)', perQty: 'même quantité', perOne: '1 unité', remove: 'Retirer', saved: 'Enregistré',
   },
@@ -31,7 +31,7 @@ const L = {
     accepted: 'تم قبول الطلبية', options: 'الخيارات', orderable: 'قابل للطلب', choose: 'اختر…', required: 'إجباري',
     optTitle: 'خيارات المنتج', optIntro: 'مثال: «التحضير» (عادي، مشوي) و«التوابل» (بها، بدونها). يمكن للخيار أن يضيف منتجاً أو خدمة أخرى (مثلاً: مشوي يضيف الشواء بالكيلو) ويُحتسب ثمنه من ذلك المنتج.',
     group: 'اسم الخيار', multiple: 'يمكن اختيار أكثر من واحد', addGroup: 'إضافة خيار', choice: 'الاختيار', addChoice: 'إضافة اختيار',
-    pay: 'استخلاص', pm_cash: 'نقداً', pm_card: 'بطاقة', pm_transfer: 'تحويل', paid: 'تم الاستخلاص وإصدار الفاتورة', inKitchen: 'في المطبخ: يُستخلص عندما تكون جاهزة',
+    perFixed: 'حصة ثابتة', portion: 'الحصة (كلغ أو وحدات)', pay: 'استخلاص', pm_cash: 'نقداً', pm_card: 'بطاقة', pm_transfer: 'تحويل', paid: 'تم الاستخلاص وإصدار الفاتورة', inKitchen: 'في المطبخ: يُستخلص عندما تكون جاهزة',
     cancelOrder: 'إلغاء الطلبية', os_closed: 'تم الاستخلاص', os_cancelled: 'ملغاة (تم تحرير المخزون)',
     saveOptions: 'حفظ', adds: 'يضيف', nothing: 'لا شيء (توضيح فقط)', perQty: 'نفس الكمية', perOne: 'وحدة واحدة', remove: 'حذف', saved: 'تم الحفظ',
   },
@@ -171,9 +171,10 @@ export async function editOptions(item, allItems, done) {
     const addChoice = (ch = { label: '', add_item_id: null, qty_mode: 'same' }) => {
       const ci = choices.length, label = h('input', { id: `oc-label-${gi}-${ci}`, value: ch.label, maxlength: '60', required: true, 'aria-label': o('choice') });
       const addItem = sel(`oc-add-${gi}-${ci}`, [opt('', o('nothing'), !ch.add_item_id), ...others.map((x) => opt(x.id, `${o('adds')}: ${x.name} (${money(x.price)})`, x.id === ch.add_item_id))]);
-      const mode = sel(`oc-mode-${gi}-${ci}`, [opt('same', o('perQty'), ch.qty_mode !== 'one'), opt('one', o('perOne'), ch.qty_mode === 'one')]);
-      const row = h('div', { class: 'row option-choice' }, h('div', { class: 'grow' }, label), addItem, mode);
-      const c = { read: () => ({ id: ch.id, label: label.value.trim(), addItemId: addItem.value || undefined, qtyMode: mode.value }), row };
+      const mode = sel(`oc-mode-${gi}-${ci}`, [opt('same', o('perQty'), !['one', 'fixed'].includes(ch.qty_mode)), opt('one', o('perOne'), ch.qty_mode === 'one'), opt('fixed', o('perFixed'), ch.qty_mode === 'fixed')]);
+      const portion = h('input', { id: `oc-qty-${gi}-${ci}`, type: 'number', min: '0.001', step: '0.001', value: ch.add_qty ?? '', 'aria-label': o('portion'), class: 'portion-in' });
+      const row = h('div', { class: 'row option-choice' }, h('div', { class: 'grow' }, label), addItem, mode, portion);
+      const c = { read: () => ({ id: ch.id, label: label.value.trim(), addItemId: addItem.value || undefined, qtyMode: mode.value, ...(mode.value === 'fixed' ? { addQty: Number(portion.value) } : {}) }), row };
       row.append(btn(o('remove'), () => { choices.splice(choices.indexOf(c), 1); row.remove(); }));
       choices.push(c); choicesBox.append(row);
     };
