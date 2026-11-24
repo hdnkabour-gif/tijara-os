@@ -6,9 +6,9 @@ import { ACTIVITIES } from './templates.js';
 const CAT = ['catalog.view', 'catalog.manage', 'stock.view', 'stock.receive', 'stock.adjust', 'sale.view', 'sale.create', 'sale.discount',
   'sale.price_override', 'sale.void', 'customers.view', 'customers.manage', 'branches.view', 'report.view'];
 export const DEFAULT_ROLES: Record<string, string[]> = {
-  owner: [...CAT, 'approvals.decide', 'report.view_profit', 'users.manage', 'branches.manage', 'audit.view', 'settings.manage', 'kitchen.view','kitchen.manage','purchases.view','purchases.manage','cash.view','cash.manage','production.manage','workshop.view','workshop.manage'],
-  manager: [...CAT, 'approvals.decide', 'audit.view','kitchen.view','kitchen.manage','purchases.view','cash.view','cash.manage','workshop.view','workshop.manage'],
-  cashier: ['catalog.view', 'stock.view', 'sale.view', 'sale.create', 'customers.view', 'branches.view'],
+  owner: [...CAT, 'approvals.decide', 'report.view_profit', 'users.manage', 'branches.manage', 'audit.view', 'settings.manage', 'kitchen.view','kitchen.manage','purchases.view','purchases.manage','cash.view','cash.manage','production.manage','workshop.view','workshop.manage','orders.view','orders.manage'],
+  manager: [...CAT, 'approvals.decide', 'audit.view','kitchen.view','kitchen.manage','purchases.view','cash.view','cash.manage','workshop.view','workshop.manage','orders.view','orders.manage'],
+  cashier: ['catalog.view', 'stock.view', 'sale.view', 'sale.create', 'customers.view', 'branches.view', 'orders.view', 'orders.manage'],
 };
 
 export async function createUser(platform: pg.Pool, email: string, name: string, passwordHash: string | null = null): Promise<string> {

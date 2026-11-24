@@ -13,6 +13,7 @@ export const PERMISSION_GROUPS: { id: string; permissions: string[] }[] = [
   { id: 'cash', permissions: ['cash.view','cash.manage'] },
   { id: 'production', permissions: ['production.manage'] },
   { id: 'workshop', permissions: ['workshop.view','workshop.manage'] },
+  { id: 'orders', permissions: ['orders.view','orders.manage'] },
 ];
 export const ALL_PERMISSIONS = PERMISSION_GROUPS.flatMap((g) => g.permissions);
 export const isPermission = (p: string) => ALL_PERMISSIONS.includes(p);

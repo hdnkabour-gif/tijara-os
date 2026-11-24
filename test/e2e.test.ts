@@ -856,4 +856,69 @@ describe('web UI in a real browser', () => {
     expect([...adm.problems.filter((p:string)=>!/40[03]/.test(p)),...own.problems]).toEqual([]);
     await adm.ctx.close(); await own.ctx.close();
   }, 90_000);
+  it('E21: options set in the UI, a phone order with choices, accepted from the inbox, choices shown in the kitchen; fits an Arabic phone', async () => {
+    const shop=await createShop(api,admin,'pro','Orders UI shop',['butcher','grill']);
+    const items=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
+    const beef=items.find((i:any)=>i.sku==='BUT-BOEUF'), grill=items.find((i:any)=>i.sku==='GRL-CUISSON');
+    await api.call('POST','/stock/receive',{token:shop.ownerToken,headers:{'idempotency-key':key()},body:{branchId:shop.branchId,itemId:beef.id,qty:10,unitCost:80}});
+    const {ctx,page,problems}=await newPage();
+    await uiLogin(page,shop.ownerEmail);
+    await page.waitForSelector('#tile-sales');
+    // 1) the owner makes beef orderable with two options (in the product list)
+    await page.locator('nav.nav').getByRole('link',{name:'Produits & services'}).click();
+    await page.locator('tr[data-sku="BUT-BOEUF"] [data-action=options]').click();
+    await page.locator('#opt-orderable').check();
+    await page.getByRole('button',{name:/Ajouter une option/}).click();
+    await page.fill('#og-name-0','Préparation'); await page.locator('#og-req-0').check();
+    await page.fill('#oc-label-0-0','Nature');
+    await page.locator('.option-group-edit').nth(0).getByRole('button',{name:/Ajouter un choix/}).click();
+    await page.fill('#oc-label-0-1','Grillé'); await page.selectOption('#oc-add-0-1',grill.id);
+    await page.getByRole('button',{name:/Ajouter une option/}).click();
+    await page.fill('#og-name-1','Épices'); await page.fill('#oc-label-1-0','Sans épices');
+    await page.locator('.modal button[type=submit]').click();
+    await page.locator('tr[data-sku="BUT-BOEUF"]').getByText('Commandable').waitFor();
+    // 2) a phone order: 1.5 kg grilled, no spices
+    await page.locator('nav.nav').getByRole('link',{name:'Commandes',exact:true}).click();
+    await page.locator('#new-order').click();
+    await page.selectOption('#o-channel','phone');
+    await page.fill('#o-name','Client Téléphone');
+    await page.selectOption('#o-item-0',beef.id);
+    await page.fill('#o-qty-0','1.5');
+    await page.locator('.option-group').filter({hasText:'Préparation'}).getByText('Grillé').click();
+    await page.locator('.option-group').filter({hasText:'Épices'}).getByText('Sans épices').click();
+    await page.locator('.modal button[type=submit]').click();
+    const card=page.locator('.order-card.pending').filter({hasText:'Client Téléphone'});
+    await card.getByText(/Grillé · Sans épices/).waitFor();
+    expect(await card.locator('.total').innerText()).toMatch(/210,00/);             // 1.5 x 120 + 1.5 x 20, computed by the server
+    await noLeaks(page);
+    await shot(page,'e21-inbox');
+    // 3) accept: it becomes a sale in the kitchen queue with the customer's choices
+    await card.locator('[data-action=accept]').click();
+    await page.locator('.chip').filter({hasText:'Toutes'}).click();
+    await page.locator('.order-card.accepted').filter({hasText:'Client Téléphone'}).waitFor();
+    await page.locator('nav.nav').getByRole('link',{name:'Cuisine & grill'}).click();
+    await page.locator('.kitchen-note').filter({hasText:'Grillé · Sans épices'}).waitFor();
+    expect(await page.locator('main').innerText()).not.toMatch(/· phone|\d unit\b/);    // no raw codes on the kitchen screen (label, unit)
+    await shot(page,'e21-kitchen');
+    // the kitchen marks it ready, then it is paid from the inbox
+    await page.getByRole('button',{name:'Démarrer la préparation'}).click();
+    await page.getByRole('button',{name:'Marquer prête'}).click();
+    await page.locator('nav.nav').getByRole('link',{name:'Commandes',exact:true}).click();
+    await page.locator('.chip').filter({hasText:'Toutes'}).click();
+    await page.locator('.order-card.accepted [data-action=pay-cash]').click();
+    await page.locator('.order-card.accepted').getByText('Encaissée').waitFor();
+    expect((await api.call('GET','/invoices',{token:shop.ownerToken})).json.invoices).toHaveLength(1);
+    expect(problems).toEqual([]);
+    await ctx.close();
+    // 4) the order dialog on an Arabic phone
+    const mobile=await newPage({mobile:true,locale:'ar-MA'});
+    await uiLogin(mobile.page,shop.ownerEmail);
+    await mobile.page.locator('nav.nav').getByRole('link',{name:'الطلبات'}).click();
+    await mobile.page.locator('#new-order').click();
+    await mobile.page.locator('.option-group').first().waitFor();
+    await fitsPhone(mobile.page);
+    await shot(mobile.page,'e21-new-order-mobile-ar');
+    expect(mobile.problems).toEqual([]);
+    await mobile.ctx.close();
+  }, 90_000);
 });

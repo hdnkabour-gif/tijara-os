@@ -6,7 +6,7 @@ import { getPolicy, isApproved, requestApproval } from './approvals.js';
 import { issueInvoiceAndPay, PaymentIn, refundInvoice } from './payments.js';
 import { audit } from './audit.js';
 
-export interface LineIn { itemId: string; qty: number; unitPrice?: number; prepRequired?: boolean; serialNo?: string; actualQty?: number }
+export interface LineIn { itemId: string; qty: number; unitPrice?: number; prepRequired?: boolean; serialNo?: string; actualQty?: number; note?: string }
 
 async function event(cc: CommandCtx, orderId: string, from: string | null, to: string, note?: string) {
   await cc.client.query(
@@ -68,10 +68,10 @@ export async function createOrder(cc: CommandCtx, p: { branchId: string; custome
     const price = l.unitPrice ?? Number(item.price);
     const r = await cc.client.query(
       `INSERT INTO sales_order_lines (tenant_id, order_id, line_no, item_id, fulfillment, ordered_qty, unit_price,
-          line_total, prep_required, serial_no, item_name_at_sale, item_sku_at_sale, base_uom_at_sale)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,round($6::numeric*$7::numeric,2),$8,$9,$10,$11,$12) RETURNING id`,
+          line_total, prep_required, serial_no, item_name_at_sale, item_sku_at_sale, base_uom_at_sale, note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,round($6::numeric*$7::numeric,2),$8,$9,$10,$11,$12,$13) RETURNING id`,
       [cc.tenantId, orderId, ++n, l.itemId, item.fulfillment, l.qty, price, l.prepRequired ?? false, l.serialNo ?? null,
-        item.name, item.sku, item.base_uom]);
+        item.name, item.sku, item.base_uom, l.note ?? null]);
     lineIds.push(r.rows[0].id);
   }
   await recalcTotal(cc, orderId);

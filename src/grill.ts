@@ -30,7 +30,7 @@ export function registerGrillRoutes(k: Kit) {
     const orders = (await withTenant(runtime, a.ctx, (c) => c.query(
       `SELECT o.id, o.branch_id, o.service_label, o.state, o.total, o.created_at,
               COALESCE(jsonb_agg(jsonb_build_object('item',l.item_name_at_sale,'qty',COALESCE(l.actual_qty,l.ordered_qty),
-                  'unit',l.base_uom_at_sale,'prepStarted',l.prep_started) ORDER BY l.line_no)
+                  'unit',l.base_uom_at_sale,'prepStarted',l.prep_started,'note',l.note) ORDER BY l.line_no)
                   FILTER (WHERE l.id IS NOT NULL), '[]'::jsonb) AS lines
          FROM sales_orders o
          JOIN sales_order_lines l ON l.tenant_id=o.tenant_id AND l.order_id=o.id AND l.prep_required

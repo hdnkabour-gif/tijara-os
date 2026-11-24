@@ -1,5 +1,5 @@
 import { api, field, friendly, h, modal, newKey, toast } from './lib.js';
-import { dayFmt, getLang, money, qtyFmt } from './i18n.js';
+import { dayFmt, getLang, money, qtyFmt, uom } from './i18n.js';
 
 const dict = {
   fr: {
@@ -101,7 +101,7 @@ export async function grillView(S){
       return button;
     };
     const rows=[];
-    for(const o of orders)rows.push(card(h('div',{class:'row'},h('strong',{class:'grow'},o.service_label||o.id.slice(0,8)),h('span',{class:'badge'},stateName(o.state))),h('p',{class:'muted'},o.lines.map(l=>`${l.item} × ${qtyFmt(l.qty)} ${l.unit}`).join(' · ')),h('p',null,money(o.total)),h('div',{class:'row'},...(await actions(o)))));
+    for(const o of orders)rows.push(card(h('div',{class:'row'},h('strong',{class:'grow'},o.service_label||o.id.slice(0,8)),h('span',{class:'badge'},stateName(o.state))),h('ul',{class:'order-lines kitchen-lines'},o.lines.map(l=>h('li',null,h('strong',null,`${l.item} × ${qtyFmt(l.qty)} ${uom(l.unit)}`),l.note?h('span',{class:'kitchen-note'},` — ${l.note}`):''))),h('p',null,money(o.total)),h('div',{class:'row'},...(await actions(o)))));
     root.replaceChildren(head(w('grill'),S.me.permissions.includes('sale.create')?btn('+ '+w('create'),create,'primary'):null),
       branchSelector(S,branchId,(v)=>{branchId=v;render().catch(danger);}),
       h('h2',null,w('queue')),h('div',{class:'grid tiles'},rows.length?rows:card(w('empty'))));

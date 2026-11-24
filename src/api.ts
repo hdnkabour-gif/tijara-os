@@ -16,6 +16,7 @@ import { registerGrillRoutes } from './grill.js';
 import { registerWorkshopRoutes } from './workshop.js';
 import { registerControlRoutes } from './control.js';
 import { registerSupportRoutes } from './support.js';
+import { registerOrderRoutes } from './orders.js';
 import type { Handler, Rc } from './kit.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, send, str, uuid } from './http.js';
@@ -306,7 +307,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   add('GET', '/items', 'session', async (rc) => {
     const a = await authorize(rc, 'catalog.view');
     return { body: { items: (await withTenant(d.runtime, a.ctx, (c) => c.query(
-      `SELECT id, sku, name, kind, track_quantity, batch_tracking, serial_tracking, fulfillment, base_uom, price, active, attributes FROM items ORDER BY sku`))).rows } };
+      `SELECT id, sku, name, kind, track_quantity, batch_tracking, serial_tracking, fulfillment, base_uom, price, active, orderable, attributes FROM items ORDER BY sku`))).rows } };
   });
   add('POST', '/items', 'session', async (rc) => {
     const a = await authorize(rc, 'catalog.manage'), b = rc.body;
@@ -412,6 +413,7 @@ export function createApp(d: AppDeps): http.RequestListener {
   registerWorkshopRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
   registerControlRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform }, { version: d.version ?? 'dev', expectedMigrations: d.expectedMigrations });
   registerSupportRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
+  registerOrderRoutes({ add, authorize, idemKey, runtime: d.runtime, platform: d.platform });
 
   // ───────────── dispatcher ─────────────
   const clientIp = (req: http.IncomingMessage) =>
