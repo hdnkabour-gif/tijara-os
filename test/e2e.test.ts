@@ -900,6 +900,14 @@ describe('web UI in a real browser', () => {
     await page.locator('.kitchen-note').filter({hasText:'Grillé · Sans épices'}).waitFor();
     expect(await page.locator('main').innerText()).not.toMatch(/· phone|\d unit\b/);    // no raw codes on the kitchen screen (label, unit)
     await shot(page,'e21-kitchen');
+    // the kitchen marks it ready, then it is paid from the inbox
+    await page.getByRole('button',{name:'Démarrer la préparation'}).click();
+    await page.getByRole('button',{name:'Marquer prête'}).click();
+    await page.locator('nav.nav').getByRole('link',{name:'Commandes',exact:true}).click();
+    await page.locator('.chip').filter({hasText:'Toutes'}).click();
+    await page.locator('.order-card.accepted [data-action=pay-cash]').click();
+    await page.locator('.order-card.accepted').getByText('Encaissée').waitFor();
+    expect((await api.call('GET','/invoices',{token:shop.ownerToken})).json.invoices).toHaveLength(1);
     expect(problems).toEqual([]);
     await ctx.close();
     // 4) the order dialog on an Arabic phone

@@ -3,7 +3,7 @@ import { runCommand } from './commands.js';
 import { withTenant } from './db.js';
 import { HttpError, arr, bad, num, oneOf, optUuid, str, uuid } from './http.js';
 import type { Kit, Rc } from './kit.js';
-import { confirmOrder, createOrder, type LineIn } from './sales.js';
+import { cancelOrder, confirmOrder, createOrder, payOrder, type LineIn } from './sales.js';
 
 /**
  * Phase D1: product options + order inbox. A request records what the customer wants (and a quote computed by the
@@ -15,6 +15,13 @@ const MODES = ['pickup', 'dine_in'] as const;             // delivery comes with
 const MAX_LINES = 30;
 const opt = (v: unknown, name: string, max: number) => (v == null || v === '' ? null : str(v, name, max));
 const money = (n: number) => Math.round(n * 100) / 100;
+/** An optional list that may be EMPTY (no options, no choice picked); arr() requires at least one element. */
+const list = (v: unknown, name: string, max: number): any[] => {
+  if (v == null) return [];
+  if (!Array.isArray(v) || v.length > max) throw bad(`${name} must be an array (max ${max})`);
+  return v;
+};
+const PAYMENT_METHODS = ['cash', 'card', 'transfer'] as const;
 
 type Choice = { id: string; group_id: string; label: string; add_item_id: string | null; qty_mode: 'same' | 'one'; add_price: string | null; add_active: boolean | null };
 type Group = { id: string; name: string; required: boolean; multiple: boolean; choices: Choice[] };
@@ -49,9 +56,12 @@ export function registerOrderRoutes(k: Kit) {
   /** Replace the whole option set of a product (simple to edit, nothing half-saved). Past requests keep their labels. */
   add('PUT', '/items/:id/options', 'session', async (rc) => {
     const a = await authorize(rc, 'catalog.manage'), id = uuid(rc.params.id, 'id');
-    const groups = arr(rc.body.groups, 'groups', 10).map((g: any, i: number) => ({
+    // groups/choices sent back with their id keep it: pending orders that chose them stay valid
+    const groups = list(rc.body.groups, 'groups', 10).map((g: any, i: number) => ({
+      id: optUuid(g.id, `groups[${i}].id`) ?? null,
       name: str(g.name, `groups[${i}].name`, 60), required: g.required === true, multiple: g.multiple === true,
-      choices: arr(g.choices, `groups[${i}].choices`, 20).map((ch: any, j: number) => ({
+      choices: list(g.choices, `groups[${i}].choices`, 20).map((ch: any, j: number) => ({
+        id: optUuid(ch.id, `groups[${i}].choices[${j}].id`) ?? null,
         label: str(ch.label, `groups[${i}].choices[${j}].label`, 60),
         addItemId: optUuid(ch.addItemId, `groups[${i}].choices[${j}].addItemId`) ?? null,
         qtyMode: oneOf(ch.qtyMode ?? 'same', 'qtyMode', ['same', 'one'] as const),
@@ -66,15 +76,31 @@ export function registerOrderRoutes(k: Kit) {
         const x = (await c.query('SELECT active FROM items WHERE id=$1', [ch.addItemId])).rows[0];
         if (!x || !x.active) throw bad(`choice "${ch.label}": the added product is missing or archived`);
       }
-      await c.query('DELETE FROM item_option_groups WHERE item_id=$1', [id]);
+      // upsert: an id that already belongs to THIS product is updated in place; anything not sent back is removed
+      const existing = (await c.query(`SELECT g.id AS gid, ch.id AS cid FROM item_option_groups g
+          LEFT JOIN item_option_choices ch ON ch.tenant_id=g.tenant_id AND ch.group_id=g.id WHERE g.item_id=$1`, [id])).rows;
+      const ownGroups = new Set(existing.map((r: any) => r.gid));
+      const keptGroups: string[] = [], keptChoices: string[] = [];
       let gp = 0;
       for (const g of groups) {
-        const gid = (await c.query('INSERT INTO item_option_groups (tenant_id,item_id,name,required,multiple,position) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+        let gid: string | null = g.id && ownGroups.has(g.id) ? g.id : null;
+        if (gid) await c.query('UPDATE item_option_groups SET name=$2,required=$3,multiple=$4,position=$5 WHERE id=$1', [gid, g.name, g.required, g.multiple, gp++]);
+        else gid = (await c.query('INSERT INTO item_option_groups (tenant_id,item_id,name,required,multiple,position) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
           [a.ctx.tenantId, id, g.name, g.required, g.multiple, gp++])).rows[0].id;
+        keptGroups.push(gid as string);
+        const ownChoices = new Set(existing.filter((r: any) => r.gid === gid && r.cid).map((r: any) => r.cid));
         let cp = 0;
-        for (const ch of g.choices) await c.query('INSERT INTO item_option_choices (tenant_id,group_id,label,add_item_id,qty_mode,position) VALUES ($1,$2,$3,$4,$5,$6)',
-          [a.ctx.tenantId, gid, ch.label, ch.addItemId, ch.qtyMode, cp++]);
+        for (const ch of g.choices) {
+          if (ch.id && ownChoices.has(ch.id)) {
+            await c.query('UPDATE item_option_choices SET label=$2,add_item_id=$3,qty_mode=$4,position=$5 WHERE id=$1', [ch.id, ch.label, ch.addItemId, ch.qtyMode, cp++]);
+            keptChoices.push(ch.id);
+          } else keptChoices.push((await c.query('INSERT INTO item_option_choices (tenant_id,group_id,label,add_item_id,qty_mode,position) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+            [a.ctx.tenantId, gid, ch.label, ch.addItemId, ch.qtyMode, cp++])).rows[0].id);
+        }
       }
+      await c.query(`DELETE FROM item_option_choices ch USING item_option_groups g
+          WHERE ch.tenant_id=g.tenant_id AND ch.group_id=g.id AND g.item_id=$1 AND NOT (ch.id = ANY($2::uuid[]))`, [id, keptChoices]);
+      await c.query('DELETE FROM item_option_groups WHERE item_id=$1 AND NOT (id = ANY($2::uuid[]))', [id, keptGroups]);
       await audit(c, a.ctx.tenantId, a.ctx.userId, 'item.options_updated', { type: 'item', id }, undefined, { groups: groups.map((g) => ({ name: g.name, choices: g.choices.map((x) => x.label) })) });
     });
     return { body: { status: 'ok' } };
@@ -120,7 +146,7 @@ export function registerOrderRoutes(k: Kit) {
       toKitchen: b.toKitchen !== false,
       lines: arr(b.lines, 'lines', MAX_LINES).map((l: any, i: number) => ({
         itemId: uuid(l.itemId, `lines[${i}].itemId`), qty: num(l.qty, `lines[${i}].qty`, { positive: true }),
-        choiceIds: (l.choiceIds == null ? [] : arr(l.choiceIds, `lines[${i}].choiceIds`, 20)).map((x: unknown, j: number) => uuid(x, `lines[${i}].choiceIds[${j}]`)),
+        choiceIds: list(l.choiceIds, `lines[${i}].choiceIds`, 20).map((x: unknown, j: number) => uuid(x, `lines[${i}].choiceIds[${j}]`)),
         note: opt(l.note, `lines[${i}].note`, 200),
       })),
     };
@@ -205,6 +231,40 @@ export function registerOrderRoutes(k: Kit) {
       const total = (await cc.client.query('SELECT total FROM sales_orders WHERE id=$1', [orderId])).rows[0].total;
       await audit(cc.client, cc.tenantId, cc.userId, 'order_request.accepted', { type: 'order_request', id }, undefined, { orderId, total });
       return { orderId, total };
+    });
+    return { body: result };
+  });
+  /** Checkout of an accepted order from the inbox: at once when it does not go through the kitchen, else once it is ready.
+   *  Same payment engine as everywhere (invoice issued once, stock committed once); retries replay the stored result. */
+  add('POST', '/order-requests/:id/pay', 'session', async (rc) => {
+    const { a, id } = await loadRequest(rc, 'orders.manage');
+    if (!a.permissions.includes('sale.create')) throw new HttpError(403, 'FORBIDDEN', 'sale.create required to take a payment');
+    const payments = list(rc.body.payments, 'payments', 5).map((p: any, i: number) => ({
+      method: oneOf(p.method, `payments[${i}].method`, PAYMENT_METHODS), amount: num(p.amount, `payments[${i}].amount`, { positive: true }) }));
+    const result = await runCommand(runtime, a.ctx, { key: idemKey(rc), type: 'order_request_pay', payload: { id, payments } }, async (cc) => {
+      const r = (await cc.client.query(`SELECT r.status, r.to_kitchen, r.sales_order_id, o.state FROM order_requests r
+          LEFT JOIN sales_orders o ON o.tenant_id=r.tenant_id AND o.id=r.sales_order_id WHERE r.id=$1 FOR UPDATE OF r`, [id])).rows[0];
+      if (r.status !== 'accepted') throw new HttpError(409, 'INVALID_STATE', 'accept the order before taking the payment');
+      const payable = r.to_kitchen ? r.state === 'ready' : ['confirmed', 'ready'].includes(r.state);
+      if (!payable) throw new HttpError(409, 'INVALID_STATE', r.to_kitchen ? 'the kitchen must mark the order ready before payment' : `cannot pay an order that is ${r.state}`);
+      const invoice = await payOrder(cc, { orderId: r.sales_order_id, payments });
+      await audit(cc.client, cc.tenantId, cc.userId, 'order_request.paid', { type: 'order_request', id }, undefined, { invoiceId: invoice.invoiceId });
+      return invoice;
+    });
+    return { status: 201, body: result };
+  });
+  /** An accepted order that will not be collected: the sale is cancelled and its reserved stock released (before any preparation). */
+  add('POST', '/order-requests/:id/cancel', 'session', async (rc) => {
+    const { a, id } = await loadRequest(rc, 'orders.manage');
+    if (!a.permissions.includes('sale.void')) throw new HttpError(403, 'FORBIDDEN', 'sale.void required to cancel an accepted order');
+    const reason = str(rc.body.reason, 'reason', 300);
+    const result = await runCommand(runtime, a.ctx, { key: idemKey(rc), type: 'order_request_cancel', payload: { id, reason } }, async (cc) => {
+      const r = (await cc.client.query(`SELECT r.status, r.sales_order_id, o.state FROM order_requests r
+          LEFT JOIN sales_orders o ON o.tenant_id=r.tenant_id AND o.id=r.sales_order_id WHERE r.id=$1 FOR UPDATE OF r`, [id])).rows[0];
+      if (r.status !== 'accepted' || r.state !== 'confirmed') throw new HttpError(409, 'INVALID_STATE', 'only an accepted order not yet prepared or paid can be cancelled here');
+      await cancelOrder(cc, { orderId: r.sales_order_id, reason });
+      await audit(cc.client, cc.tenantId, cc.userId, 'order_request.cancelled', { type: 'order_request', id }, undefined, { reason });
+      return { state: 'cancelled' };
     });
     return { body: result };
   });

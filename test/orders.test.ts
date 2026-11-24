@@ -108,3 +108,59 @@ describe('Phase D1: product options and the order inbox (through the existing sa
     expect(inbox.map((x:any)=>x.id)).toContain(r.id);
   });
 });
+
+describe('Phase D1 review fixes: empty choices, saving options, paying and cancelling accepted orders',()=>{
+  it('OD7: a product without options can be ordered (empty choice list), options can be removed, and re-saving keeps choice ids',async()=>{
+    const {A,lamb,beef,choice,order,accept}=await grillShop('No options');
+    expect((await api.call('PUT',`/items/${lamb}/options`,{token:A.ownerToken,body:{groups:[]}})).status).toBe(200);     // no options at all
+    expect((await api.call('PATCH',`/items/${lamb}`,{token:A.ownerToken,body:{orderable:true}})).status).toBe(200);
+    expect((await order({lines:[{itemId:lamb,qty:1,choiceIds:[]}]})).status).toBe(201);
+    // optional groups left empty: only the required one is picked
+    expect((await order({lines:[{itemId:beef,qty:1,choiceIds:[choice('Nature')]}]})).status).toBe(201);
+    // a pending order survives the owner re-saving the options unchanged (ids are sent back and kept)
+    const pending=(await order({lines:[{itemId:beef,qty:1,choiceIds:[choice('Grillé'),choice('Sans épices')]}]})).json.id;
+    const groups=(await api.call('GET',`/items/${beef}/options`,as(A.ownerToken))).json.groups;
+    const again={groups:groups.map((g:any)=>({id:g.id,name:g.name,required:g.required,multiple:g.multiple,
+      choices:g.choices.map((c:any)=>({id:c.id,label:c.label,addItemId:c.add_item_id??undefined,qtyMode:c.qty_mode}))}))};
+    expect((await api.call('PUT',`/items/${beef}/options`,{token:A.ownerToken,body:again})).status).toBe(200);
+    const after=(await api.call('GET',`/items/${beef}/options`,as(A.ownerToken))).json.groups;
+    expect(after.flatMap((g:any)=>g.choices.map((c:any)=>c.id)).sort()).toEqual(groups.flatMap((g:any)=>g.choices.map((c:any)=>c.id)).sort());
+    expect((await accept(pending)).status).toBe(200);
+    // an id from ANOTHER product is not adopted: it is a new choice
+    const lambGroups={groups:[{id:groups[0].id,name:'Copie',choices:[{id:groups[0].choices[0].id,label:'Copie'}]}]};
+    expect((await api.call('PUT',`/items/${lamb}/options`,{token:A.ownerToken,body:lambGroups})).status).toBe(200);
+    const lambOpts=(await api.call('GET',`/items/${lamb}/options`,as(A.ownerToken))).json.groups;
+    expect(lambOpts[0].id).not.toBe(groups[0].id);
+    expect((await api.call('GET',`/items/${beef}/options`,as(A.ownerToken))).json.groups).toHaveLength(2);   // beef untouched
+  });
+
+  it('OD8: an accepted order is paid from the inbox (at once if not for the kitchen, else once ready) or cancelled to release stock',async()=>{
+    const {A,beef,choice,order,accept,stock}=await grillShop('Checkout');
+    const pay=(id:string,amount:number,token=A.ownerToken,idem=key())=>api.call('POST',`/order-requests/${id}/pay`,{token,headers:{'idempotency-key':idem},body:{payments:[{method:'cash',amount}]}});
+    // counter pickup, not for the kitchen: 2 kg raw = 240
+    const raw=(await order({toKitchen:false,lines:[{itemId:beef,qty:2,choiceIds:[choice('Nature')]}]})).json.id;
+    expect((await pay(raw,240)).status).toBe(409);                                       // not accepted yet
+    expect((await accept(raw)).status).toBe(200);
+    const idem=key(), paid=await pay(raw,240,undefined,idem);
+    expect(paid.status).toBe(201);
+    expect((await pay(raw,240,undefined,idem)).json.invoiceId).toBe(paid.json.invoiceId);   // a retry never charges twice
+    expect((await pay(raw,240)).status).toBe(409);
+    let s=await stock(); expect(Number(s.on_hand)).toBe(8); expect(Number(s.reserved)).toBe(0);
+    const inbox=(await api.call('GET',`/order-requests?branchId=${A.branchId}`,as(A.ownerToken))).json.requests;
+    expect(inbox.find((x:any)=>x.id===raw).order_state).toBe('closed');
+    // for the kitchen: no payment before the kitchen marks it ready
+    const grilled=(await order({lines:[{itemId:beef,qty:1,choiceIds:[choice('Grillé')]}]})).json.id;
+    const accepted=(await accept(grilled)).json;
+    expect((await pay(grilled,140)).status).toBe(409);
+    for(const step of ['start','ready']) expect((await api.call('POST',`/grill/orders/${accepted.orderId}/${step}`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{}})).status).toBe(200);
+    expect((await pay(grilled,140)).status).toBe(201);
+    // cancelling an accepted order releases its reservation; a cashier (no sale.void) cannot
+    const later=(await order({toKitchen:false,lines:[{itemId:beef,qty:3,choiceIds:[choice('Nature')]}]})).json.id;
+    expect((await accept(later)).status).toBe(200);
+    expect(Number((await stock()).reserved)).toBe(3);
+    const cashier=await staff(api,A,'cashier');
+    expect((await api.call('POST',`/order-requests/${later}/cancel`,{token:cashier.token,headers:{'idempotency-key':key()},body:{reason:'Client absent'}})).status).toBe(403);
+    expect((await api.call('POST',`/order-requests/${later}/cancel`,{token:A.ownerToken,headers:{'idempotency-key':key()},body:{reason:'Client absent'}})).status).toBe(200);
+    s=await stock(); expect(Number(s.reserved)).toBe(0); expect(Number(s.on_hand)).toBe(7);
+  });
+});

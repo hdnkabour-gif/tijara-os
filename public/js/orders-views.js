@@ -15,6 +15,8 @@ const L = {
     accepted: 'Commande acceptée', options: 'Options', orderable: 'Commandable', choose: 'Choisir…', required: 'obligatoire',
     optTitle: 'Options du produit', optIntro: 'Exemple : « Préparation » (Nature, Grillé) et « Épices » (Avec, Sans). Une option peut ajouter un autre produit ou service (ex. Grillé ajoute la cuisson au kg) : son prix vient de ce produit.',
     group: 'Nom de l’option', multiple: 'Plusieurs choix possibles', addGroup: 'Ajouter une option', choice: 'Choix', addChoice: 'Ajouter un choix',
+    pay: 'Encaisser', pm_cash: 'espèces', pm_card: 'carte', pm_transfer: 'virement', paid: 'Encaissée : facture émise', inKitchen: 'En cuisine : encaisser quand elle est prête',
+    cancelOrder: 'Annuler la commande', os_closed: 'Encaissée', os_cancelled: 'Annulée (stock libéré)',
     saveOptions: 'Enregistrer', adds: 'Ajoute', nothing: 'Rien (simple précision)', perQty: 'même quantité', perOne: '1 unité', remove: 'Retirer', saved: 'Enregistré',
   },
   ar: {
@@ -29,6 +31,8 @@ const L = {
     accepted: 'تم قبول الطلبية', options: 'الخيارات', orderable: 'قابل للطلب', choose: 'اختر…', required: 'إجباري',
     optTitle: 'خيارات المنتج', optIntro: 'مثال: «التحضير» (عادي، مشوي) و«التوابل» (بها، بدونها). يمكن للخيار أن يضيف منتجاً أو خدمة أخرى (مثلاً: مشوي يضيف الشواء بالكيلو) ويُحتسب ثمنه من ذلك المنتج.',
     group: 'اسم الخيار', multiple: 'يمكن اختيار أكثر من واحد', addGroup: 'إضافة خيار', choice: 'الاختيار', addChoice: 'إضافة اختيار',
+    pay: 'استخلاص', pm_cash: 'نقداً', pm_card: 'بطاقة', pm_transfer: 'تحويل', paid: 'تم الاستخلاص وإصدار الفاتورة', inKitchen: 'في المطبخ: يُستخلص عندما تكون جاهزة',
+    cancelOrder: 'إلغاء الطلبية', os_closed: 'تم الاستخلاص', os_cancelled: 'ملغاة (تم تحرير المخزون)',
     saveOptions: 'حفظ', adds: 'يضيف', nothing: 'لا شيء (توضيح فقط)', perQty: 'نفس الكمية', perOne: 'وحدة واحدة', remove: 'حذف', saved: 'تم الحفظ',
   },
 };
@@ -40,7 +44,7 @@ const opt = (value, label, selected = false) => h('option', { value, selected },
 export async function ordersView(S) {
   let branchId = S.branches[0]?.id, filter = 'pending';
   const root = h('div', { id: 'orders-page' });
-  const canManage = S.me.permissions.includes('orders.manage'), canSell = S.me.permissions.includes('sale.create');
+  const canManage = S.me.permissions.includes('orders.manage'), canSell = S.me.permissions.includes('sale.create'), canVoid = S.me.permissions.includes('sale.void');
   const render = async () => {
     const { requests } = await api('GET', `/order-requests?branchId=${branchId}${filter === 'pending' ? '&status=pending' : ''}`);
     const card = (r) => h('div', { class: `card order-card ${r.status}`, 'data-request': r.id },
@@ -55,7 +59,14 @@ export async function ordersView(S) {
       r.reason && h('p', { class: 'muted' }, `${o('reason')}: ${r.reason}`),
       r.status === 'pending' && canManage && h('div', { class: 'row' },
         canSell && btn(o('accept'), () => decide(r, 'accept'), 'primary', { 'data-action': 'accept' }),
-        btn(o('reject'), () => decide(r, 'reject'), 'danger', { 'data-action': 'reject' })));
+        btn(o('reject'), () => decide(r, 'reject'), 'danger', { 'data-action': 'reject' })),
+      // after acceptance: pay here (at once if it does not go through the kitchen, or once the kitchen marked it ready)
+      r.status === 'accepted' && canManage && h('div', { class: 'row' },
+        canSell && (r.to_kitchen ? r.order_state === 'ready' : ['confirmed', 'ready'].includes(r.order_state)) && ['cash', 'card', 'transfer'].map((m) =>
+          btn(`${o('pay')} · ${o(`pm_${m}`)}`, () => pay(r, m), m === 'cash' ? 'primary' : '', { 'data-action': `pay-${m}` })),
+        r.to_kitchen && r.order_state !== 'ready' && ['confirmed', 'in_preparation'].includes(r.order_state) && h('span', { class: 'muted' }, o('inKitchen')),
+        canVoid && r.order_state === 'confirmed' && btn(o('cancelOrder'), () => cancel(r), 'danger', { 'data-action': 'cancel' })),
+      r.status === 'accepted' && ['closed', 'cancelled'].includes(r.order_state) && h('p', { class: 'muted' }, o(`os_${r.order_state}`)));
     const tabs = h('div', { class: 'chips' }, [['pending', o('pending')], ['all', o('all')]].map(([k, label]) =>
       h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter === k), onclick: () => { filter = k; render().catch(err); } }, label)));
     // put() skips false/null children (replaceChildren would print "false")
@@ -67,6 +78,18 @@ export async function ordersView(S) {
       tabs, h('div', { id: 'order-list', class: 'grid cols-2' }, requests.length ? requests.map(card) : h('p', { class: 'muted' }, o('none'))));
   };
   const err = (e) => toast(friendly(e), true);
+  const pay = async (r, method) => {
+    try { await api('POST', `/order-requests/${r.id}/pay`, { payments: Number(r.order_total) > 0 ? [{ method, amount: Number(r.order_total) }] : [] }, { 'idempotency-key': newKey() });
+      toast(o('paid')); await render(); } catch (e) { err(e); }
+  };
+  const cancel = async (r) => {
+    const reason = h('input', { id: 'cancel-reason', required: true, maxlength: '300' }), box = h('div'), key = newKey();
+    const m = modal(o('cancelOrder'), h('form', { onsubmit: async (e) => {
+      e.preventDefault();
+      try { await api('POST', `/order-requests/${r.id}/cancel`, { reason: reason.value.trim() }, { 'idempotency-key': key }); m.close(); await render(); }
+      catch (ex) { box.replaceChildren(errorBox(friendly(ex))); }
+    } }, ...field(o('reason'), reason, 'cancel-reason'), box, h('div', { class: 'row' }, h('button', { class: 'btn danger', type: 'submit' }, o('cancelOrder')))));
+  };
   const decide = async (r, what) => {
     if (what === 'reject') {
       const reason = h('input', { id: 'reject-reason', required: true, maxlength: '300' }), box = h('div');
@@ -150,7 +173,7 @@ export async function editOptions(item, allItems, done) {
       const addItem = sel(`oc-add-${gi}-${ci}`, [opt('', o('nothing'), !ch.add_item_id), ...others.map((x) => opt(x.id, `${o('adds')}: ${x.name} (${money(x.price)})`, x.id === ch.add_item_id))]);
       const mode = sel(`oc-mode-${gi}-${ci}`, [opt('same', o('perQty'), ch.qty_mode !== 'one'), opt('one', o('perOne'), ch.qty_mode === 'one')]);
       const row = h('div', { class: 'row option-choice' }, h('div', { class: 'grow' }, label), addItem, mode);
-      const c = { read: () => ({ label: label.value.trim(), addItemId: addItem.value || undefined, qtyMode: mode.value }), row };
+      const c = { read: () => ({ id: ch.id, label: label.value.trim(), addItemId: addItem.value || undefined, qtyMode: mode.value }), row };
       row.append(btn(o('remove'), () => { choices.splice(choices.indexOf(c), 1); row.remove(); }));
       choices.push(c); choicesBox.append(row);
     };
@@ -159,7 +182,7 @@ export async function editOptions(item, allItems, done) {
       h('div', { class: 'perm-row' }, required, h('label', { for: required.id }, o('required'))),
       h('div', { class: 'perm-row' }, multiple, h('label', { for: multiple.id }, o('multiple'))),
       h('h3', null, o('choice')), choicesBox, btn(`+ ${o('addChoice')}`, () => addChoice()));
-    const gs = { read: () => ({ name: name.value.trim(), required: required.checked, multiple: multiple.checked, choices: choices.map((c) => c.read()) }), card };
+    const gs = { read: () => ({ id: g.id, name: name.value.trim(), required: required.checked, multiple: multiple.checked, choices: choices.map((c) => c.read()) }), card };
     card.append(btn(o('remove'), () => { state.splice(state.indexOf(gs), 1); card.remove(); }, 'danger'));
     state.push(gs); box.append(card);
   };
