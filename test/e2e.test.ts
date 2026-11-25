@@ -1,10 +1,11 @@
 import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Api, PW, createShop, key, platformAdmin, staff, startApp, uniq } from './api-helpers.js';
+import { owner as ownerPool } from './helpers.js';
 
 // Real browser tests (Chromium via Playwright): desktop + phone viewport, French + Arabic, security properties of the web UI.
 const { chromium } = createRequire(import.meta.url)('playwright');
-let api: Api, base: string, browser: any, admin: { email: string; token: string };
+let api: Api, base: string, browser: any, admin: { id: string; email: string; token: string };
 
 beforeAll(async () => {
   api = await startApp(false);
@@ -968,4 +969,45 @@ describe('web UI in a real browser', () => {
     expect(cust.problems).toEqual([]);
     await cust.ctx.close();
   }, 120_000);
+
+  it('E23: an old platform-owned pilot gets its real owner on an Arabic phone: no password typed by the admin, a one-time link the owner uses', async () => {
+    process.env.OWNER_RECOVERY = 'claim-link';
+    try {
+      const opAdmin = await platformAdmin(api);
+      const A = await createShop(api, admin, 'pro', 'Pilote ancien UI', ['butcher']);
+      const c = await ownerPool.connect();
+      try {
+        await c.query('BEGIN'); await c.query("SELECT set_config('app.tenant_id',$1,true)", [A.tenantId]);
+        const role = (await c.query("SELECT id FROM roles WHERE tenant_id=$1 AND name='owner'", [A.tenantId])).rows[0].id;
+        await c.query('UPDATE memberships SET active=false WHERE tenant_id=$1', [A.tenantId]);
+        await c.query('INSERT INTO memberships (tenant_id,user_id,role_id) VALUES ($1,$2,$3)', [A.tenantId, opAdmin.id, role]);
+        await c.query('COMMIT');
+      } finally { c.release(); }
+      const adm = await newPage({ mobile: true, locale: 'ar-MA' });
+      await uiLogin(adm.page, opAdmin.email);
+      await adm.page.locator('#platform-overview').waitFor();
+      await adm.page.goto(`${base}/app/#/platform-shop?id=${A.tenantId}`);
+      await adm.page.locator('#first-owner').waitFor();
+      expect(await adm.page.locator('#first-owner input[type=password]').count()).toBe(0);   // the platform never chooses the password
+      const email = `${uniq('claim')}@test.local`;
+      await adm.page.fill('#fo-name', 'المالك الحقيقي'); await adm.page.fill('#fo-email', email);
+      await adm.page.locator('#first-owner button[type=submit]').click();
+      const link = (await adm.page.locator('#fo-claim .claim-link').innerText()).trim();
+      expect(link).toMatch(/\/app\/#\/reset\?token=tj_/);
+      await fitsPhone(adm.page);
+      await adm.page.locator('#fo-claim button').click();
+      await adm.page.locator('#first-owner').waitFor({ state: 'detached' });                 // reloaded: the shop no longer needs an owner
+      await adm.page.locator('#card-history').waitFor();
+      expect(adm.problems).toEqual([]);
+      await adm.ctx.close();
+      const own = await newPage({ mobile: true, locale: 'ar-MA' });
+      await own.page.goto(link);
+      await own.page.fill('#rp', 'Owner-Chosen-Pass9'); await own.page.click('button[type=submit]');
+      await own.page.waitForSelector('.badge.ok');
+      await uiLogin(own.page, email, 'Owner-Chosen-Pass9');
+      await own.page.waitForSelector('#tile-sales');
+      expect(own.problems).toEqual([]);
+      await own.ctx.close();
+    } finally { delete process.env.OWNER_RECOVERY; }
+  }, 90_000);
 });

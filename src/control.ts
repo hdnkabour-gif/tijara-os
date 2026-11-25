@@ -1,8 +1,9 @@
 import { audit } from './audit.js';
 import { withTenant } from './db.js';
 import { HttpError, bad, email, str, uuid } from './http.js';
-import { checkPasswordPolicy, hashPassword } from './auth.js';
-import { createUser } from './tenancy.js';
+import { newToken } from './auth.js';
+
+const CLAIM_MINUTES = 60;
 import type { Kit, Rc } from './kit.js';
 
 /**
@@ -95,21 +96,22 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
     } };
   });
 
-  /** Give a shop that only a platform account owns ONE real owner (old "self owner" pilots). Refused for any shop that
-   *  already has a merchant owner: the platform can never use this to enter a shop. The initial password follows the
-   *  password policy and is handed to the owner outside the app (no e-mail provider yet); the owner should change it. */
+  /** Give an old platform-owned pilot ONE real owner (active platform owner AND no active merchant owner, checked in SQL
+   *  under a lock). The platform never chooses or sees the owner's password: the account is created WITHOUT one, with a
+   *  single-use claim link (only its hash is stored) through which the owner sets it. Until a verified channel (e-mail/SMS)
+   *  delivers that link to the merchant directly, this is disabled unless the operator opts in (OWNER_RECOVERY=claim-link,
+   *  staging / synthetic pilots only) - production is blocked by default. */
   add('POST', '/platform/tenants/:id/first-owner', 'session', async (rc) => {
     platformOnly(rc);
+    if (process.env.OWNER_RECOVERY !== 'claim-link') throw new HttpError(403, 'RECOVERY_DISABLED', 'owner recovery needs a verified delivery channel; enabled on staging only');
     const id = uuid(rc.params.id, 'id'), b = rc.body;
-    const pwErr = checkPasswordPolicy(b.password);
-    if (pwErr) throw bad(pwErr);
     const emailV = email(b.email), name = str(b.name, 'name', 100);
-    const orphan = (await platform.query('SELECT platform_tenants_without_owner() AS id')).rows.some((r) => r.id === id);
-    if (!orphan) throw new HttpError(409, 'HAS_OWNER', 'this shop already has an owner (or does not exist)');
-    const userId = await createUser(platform, emailV, name, await hashPassword(b.password));
-    const r = (await platform.query('SELECT platform_assign_first_owner($1,$2,$3) AS r', [rc.session!.userId, id, userId])).rows[0].r;
-    if (r !== 'ok') throw new HttpError(409, 'HAS_OWNER', 'this shop already has an owner');
-    return { status: 201, body: { status: 'ok' } };
+    const { token, hash } = newToken();
+    const r = (await platform.query('SELECT * FROM platform_assign_first_owner($1,$2,$3,$4,$5,$6)', [rc.session!.userId, id, emailV, name, hash, CLAIM_MINUTES])).rows[0];
+    if (r.result === 'email_taken') throw new HttpError(409, 'ALREADY_EXISTS', 'this e-mail already has an account');
+    if (r.result !== 'ok') throw new HttpError(409, 'NOT_ELIGIBLE', 'only a shop owned by a platform account alone can receive a first owner');
+    // shown ONCE to the operator for an in-person hand-over; never stored or logged in clear
+    return { status: 201, body: { status: 'ok', claimPath: `/app/#/reset?token=${token}`, expiresInMinutes: CLAIM_MINUTES } };
   });
 
   add('GET', '/platform/audit', 'session', async (rc) => {

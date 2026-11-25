@@ -55,52 +55,68 @@ LANGUAGE sql SECURITY DEFINER SET search_path=public,pg_temp AS $$
          jsonb_strip_nulls(jsonb_build_object('tenantId',a.meta->>'tenantId','slug',a.meta->>'slug',
            'plan',a.meta->>'plan','scope',a.meta->>'scope','minutes',a.meta->'minutes','grantId',a.meta->>'grantId',
            'previousPlan',a.meta#>>'{before,plan}','newPlan',a.meta#>>'{after,plan}',
-           'previousStatus',a.meta#>>'{before,status}','newStatus',a.meta#>>'{after,status}'))
+           'previousStatus',a.meta#>>'{before,status}','newStatus',a.meta#>>'{after,status}','ownerUserId',a.meta->>'ownerUserId'))
     FROM platform_audit a LEFT JOIN users u ON u.id=a.actor_user_id
    WHERE p_tenant IS NULL OR a.meta->>'tenantId'=p_tenant::text
    ORDER BY a.at DESC LIMIT LEAST(GREATEST(p_limit,1),500)
 $$;
 
 -- A shop whose ONLY active owner is a platform account (old pilots created with "self owner") would be unreachable once
--- platform accounts can no longer act as merchants. The platform may give such a shop ONE real owner - and only such a
--- shop: it can never add an owner to a shop that already has a merchant owner. Nothing is deleted.
+-- platform accounts can no longer act as merchants. Exactly THOSE shops - an active platform-account owner AND no active
+-- merchant owner - may receive ONE real owner. A shop with no owner at all, or with only a deactivated merchant owner,
+-- is NOT eligible (the platform cannot use this to appoint owners elsewhere). Nothing is deleted.
+CREATE FUNCTION platform_legacy_pilot(p_tenant uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+  SELECT EXISTS (SELECT 1 FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id
+                  WHERE m.tenant_id=p_tenant AND r.name='owner' AND m.active
+                    AND EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id=m.user_id))
+     AND NOT EXISTS (SELECT 1 FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id
+                  WHERE m.tenant_id=p_tenant AND r.name='owner' AND m.active
+                    AND NOT EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id=m.user_id)) $$;
+REVOKE ALL ON FUNCTION platform_legacy_pilot(uuid) FROM PUBLIC;
+
 CREATE FUNCTION platform_tenants_without_owner() RETURNS SETOF uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
-DECLARE t record;
+DECLARE t record; ok boolean;
 BEGIN
   FOR t IN SELECT id FROM tenants LOOP
     PERFORM set_config('app.tenant_id', t.id::text, true);
-    IF NOT EXISTS (SELECT 1 FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id
-                    WHERE m.tenant_id=t.id AND r.name='owner' AND m.active
-                      AND NOT EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id=m.user_id)) THEN
-      RETURN NEXT t.id;
-    END IF;
+    ok := platform_legacy_pilot(t.id);
+    IF ok THEN RETURN NEXT t.id; END IF;
   END LOOP;
   PERFORM set_config('app.tenant_id', '', true);
 END $$;
-CREATE FUNCTION platform_assign_first_owner(p_actor uuid, p_tenant uuid, p_user uuid) RETURNS text
+
+-- One atomic step under a per-shop lock: re-check eligibility, create the owner WITHOUT a password, give the membership,
+-- store only the HASH of a one-time claim token (the owner chooses the password through it), audit with the user id.
+-- Any refusal creates nothing (no orphan account).
+CREATE FUNCTION platform_assign_first_owner(p_actor uuid, p_tenant uuid, p_email text, p_name text, p_claim_hash text, p_ttl_minutes int)
+RETURNS TABLE (result text, user_id uuid)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
-DECLARE v_role uuid;
+DECLARE v_role uuid; v_user uuid;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM platform_admins WHERE user_id=p_actor) THEN RAISE EXCEPTION 'platform admin required' USING ERRCODE='42501'; END IF;
-  IF EXISTS (SELECT 1 FROM platform_admins WHERE user_id=p_user) THEN RETURN 'platform_account'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM tenants WHERE id=p_tenant) THEN RETURN 'not_found'; END IF;
-  PERFORM set_config('app.tenant_id', p_tenant::text, true);
+  IF NOT EXISTS (SELECT 1 FROM platform_admins WHERE platform_admins.user_id=p_actor) THEN RAISE EXCEPTION 'platform admin required' USING ERRCODE='42501'; END IF;
+  IF p_ttl_minutes NOT BETWEEN 5 AND 120 THEN RAISE EXCEPTION 'invalid claim lifetime' USING ERRCODE='22023'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM tenants WHERE id=p_tenant) THEN RETURN QUERY SELECT 'not_found'::text, NULL::uuid; RETURN; END IF;
   PERFORM pg_advisory_xact_lock(hashtext('first_owner:'||p_tenant::text));
-  IF EXISTS (SELECT 1 FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id
-              WHERE m.tenant_id=p_tenant AND r.name='owner' AND m.active
-                AND NOT EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id=m.user_id)) THEN
+  PERFORM set_config('app.tenant_id', p_tenant::text, true);
+  IF NOT platform_legacy_pilot(p_tenant) THEN
     PERFORM set_config('app.tenant_id', '', true);
-    RETURN 'has_owner';
+    RETURN QUERY SELECT 'not_eligible'::text, NULL::uuid; RETURN;
   END IF;
+  IF EXISTS (SELECT 1 FROM users WHERE lower(email)=lower(p_email)) THEN
+    PERFORM set_config('app.tenant_id', '', true);
+    RETURN QUERY SELECT 'email_taken'::text, NULL::uuid; RETURN;
+  END IF;
+  INSERT INTO users (email, name, password_hash) VALUES (lower(p_email), p_name, NULL) RETURNING id INTO v_user;
   SELECT id INTO v_role FROM roles WHERE tenant_id=p_tenant AND name='owner';
-  INSERT INTO memberships (tenant_id,user_id,role_id,branch_ids,active) VALUES (p_tenant,p_user,v_role,'{}',true)
-    ON CONFLICT (tenant_id,user_id) DO UPDATE SET role_id=EXCLUDED.role_id, branch_ids='{}', active=true;
+  INSERT INTO memberships (tenant_id,user_id,role_id,branch_ids,active) VALUES (p_tenant,v_user,v_role,'{}',true);
+  INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (v_user, p_claim_hash, now() + make_interval(mins => p_ttl_minutes));
   INSERT INTO platform_audit (actor_user_id, action, meta)
-    VALUES (p_actor, 'tenant.owner_assigned', jsonb_build_object('tenantId', p_tenant));
+    VALUES (p_actor, 'tenant.owner_assigned', jsonb_build_object('tenantId', p_tenant, 'ownerUserId', v_user));
   PERFORM set_config('app.tenant_id', '', true);
-  RETURN 'ok';
+  RETURN QUERY SELECT 'ok'::text, v_user;
 END $$;
 REVOKE ALL ON FUNCTION platform_tenants_without_owner() FROM PUBLIC;
-REVOKE ALL ON FUNCTION platform_assign_first_owner(uuid,uuid,uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform_tenants_without_owner(), platform_assign_first_owner(uuid,uuid,uuid) TO app_platform;
+REVOKE ALL ON FUNCTION platform_assign_first_owner(uuid,uuid,text,text,text,int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform_tenants_without_owner(), platform_assign_first_owner(uuid,uuid,text,text,text,int) TO app_platform;
