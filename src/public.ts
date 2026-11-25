@@ -4,7 +4,8 @@ import { runCommand } from './commands.js';
 import { withTenant } from './db.js';
 import { HttpError, RateLimiter, bad, oneOf, str, uuid } from './http.js';
 import type { Kit, Rc } from './kit.js';
-import { serveFile, shopHasFeature } from './menu.js';
+import { serveFile } from './menu.js';
+import { shopModules } from './entitlements.js';
 import { type RequestIn, loadOptions, parseLines, quoteLines, insertRequest } from './orders.js';
 
 /**
@@ -68,12 +69,17 @@ export function registerPublicRoutes(k: Kit) {
     const tenantId = (await runtime.query('SELECT public_shop_by_slug($1) AS id', [slug])).rows[0].id as string | null;
     if (!tenantId) throw new HttpError(404, 'NOT_FOUND', 'menu not found');
     const ctx = { tenantId };
-    const s = await withTenant(runtime, ctx, async (c) => {
-      if (!(await shopHasFeature(c, tenantId, 'online'))) return null;
-      return (await c.query('SELECT * FROM shop_menu_settings WHERE tenant_id=$1 AND published', [tenantId])).rows[0] ?? null;
+    const found = await withTenant(runtime, ctx, async (c) => {
+      const mods = await shopModules(c, tenantId);                    // plan ∩ platform override ∩ owner choice (Issue #19)
+      if (!mods.has('online')) return null;
+      const row = (await c.query('SELECT * FROM shop_menu_settings WHERE tenant_id=$1 AND published', [tenantId])).rows[0];
+      return row ? { row, mods } : null;
     });
-    if (!s) throw new HttpError(404, 'NOT_FOUND', 'menu not found');
-    return { tenantId, ctx, s, slug };
+    if (!found) throw new HttpError(404, 'NOT_FOUND', 'menu not found');
+    // ONE effective answer for the menu and for checkout: taking orders also needs the 'orders' module. Orders already
+    // received stay in the shop (and their tracking keeps working); they come back in the inbox when it is switched on.
+    const s = { ...found.row, accepting_orders: found.row.accepting_orders && found.mods.has('orders') };
+    return { tenantId, ctx, s, slug, kitchen: found.mods.has('kitchen') };
   };
 
   add('GET', '/public/shops/:slug/menu', 'public', async (rc) => {
@@ -136,7 +142,7 @@ export function registerPublicRoutes(k: Kit) {
   });
 
   add('POST', '/public/shops/:slug/orders', 'public', async (rc) => {
-    const { tenantId, ctx, s } = await shop(rc);
+    const { tenantId, ctx, s, kitchen } = await shop(rc);
     if (k.production && !configuredSecret) throw new HttpError(503, 'NOT_CONFIGURED', 'online ordering is not configured on this server');
     limit(ordersByIp, rc.ip); limit(ordersByShop, tenantId);
     const b = rc.body;
@@ -160,7 +166,7 @@ export function registerPublicRoutes(k: Kit) {
     };
     const consent = b.contactConsent === true;
     // a shop without the kitchen module pays at once from the inbox; with it, the kitchen marks the order ready first
-    p.toKitchen = await withTenant(runtime, ctx, (c) => shopHasFeature(c, tenantId, 'kitchen'));
+    p.toKitchen = kitchen;
     const tracking = trackingFor(tenantId, key);
     const result = await runCommand(runtime, ctx, { key: `web:${key}`, type: 'public_order', payload: { ...p, consent } }, async (cc) => {
       // one order at a time per shop for the slot check: two customers cannot both take the last place of a slot

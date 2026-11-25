@@ -281,3 +281,57 @@ describe('D2 review fixes',()=>{
     }finally{await prod.close();}
   });
 });
+
+describe('Issue #19 review: the public side follows the shop modules',()=>{
+  const setModule=(token:string,id:string,enabled:boolean)=>api.call('PATCH','/tenant/modules/'+id,{token,body:{enabled}});
+  const controls=(id:string,features:object)=>api.call('PATCH',`/platform/tenants/${id}/controls`,{token:admin.token,body:{features}});
+
+  it('PM1: online ON but orders OFF (owner or platform): no checkout offered and no order created, even with a valid form token; pending orders are kept',async()=>{
+    const {A,slug,menu,beef,choice}=await menuShop('Orders module shop');
+    const m=await readyToOrder(menu);                                                         // a valid form token obtained BEFORE the switch
+    try{
+      const body=(n:string)=>({formToken:m.formToken,mode:'pickup',wantedAt:m.ordering.slots[0].at,customerName:n,customerPhone:'0600000009',
+        lines:[{itemId:beef,qty:1,choiceIds:[choice('Nature')]}]});
+      const first=await order(slug,body('Before'));
+      expect(first.status).toBe(201);
+      // the owner switches taking orders off: the menu stays public, checkout disappears, submissions are refused
+      expect((await setModule(A.ownerToken,'orders',false)).status).toBe(200);
+      const shown=(await menu()).json;
+      expect(shown.ordering.accepting).toBe(false); expect(shown.ordering.slots).toEqual([]); expect(shown.items.length).toBeGreaterThan(0);
+      const refused=await order(slug,body('After'));
+      expect(refused.status).toBe(409); expect(refused.json.error.code).toBe('CLOSED');
+      expect((await api.call('PUT','/menu/settings',{token:A.ownerToken,body:{published:true,acceptingOrders:true,hours:ALL_WEEK}})).status).toBe(403);
+      expect((await api.call('GET',`/order-requests?branchId=${A.branchId}`,as(A.ownerToken))).status).toBe(403);
+      // the order received before is not lost: its customer can still follow it
+      expect((await api.call('POST','/public/track',{body:{token:first.json.tracking}})).json.step).toBe('received');
+      // back on: the inbox shows it again and new orders work
+      expect((await setModule(A.ownerToken,'orders',true)).status).toBe(200);
+      const inbox=(await api.call('GET',`/order-requests?branchId=${A.branchId}&status=pending`,as(A.ownerToken))).json.requests;
+      expect(inbox.map((r:any)=>r.customer_name)).toEqual(['Before']);
+      expect((await order(slug,body('Again'))).status).toBe(201);
+      // the platform override closes it the same way, whatever the owner chose
+      expect((await controls(A.tenantId,{orders:false})).status).toBe(200);
+      expect((await menu()).json.ordering.accepting).toBe(false);
+      expect((await order(slug,body('Platform off'))).status).toBe(409);
+      expect((await setModule(A.ownerToken,'orders',true)).status).toBe(403);               // the owner cannot override the platform
+      expect((await controls(A.tenantId,{})).status).toBe(200);
+      expect((await order(slug,body('Platform on'))).status).toBe(201);
+    }finally{ vi.useRealTimers(); }
+  });
+
+  it('PM2: online OFF: public menu gone and the menu/media administration refused, while the ordinary catalog keeps working',async()=>{
+    const {A,slug,menu,beef}=await menuShop('Online module shop');
+    const up=await upload(A.ownerToken,beef,png());
+    expect(up.status).toBe(201);
+    expect((await setModule(A.ownerToken,'online',false)).status).toBe(200);
+    expect((await menu()).status).toBe(404);
+    expect((await api.call('GET',`/public/shops/${slug}/media/${up.json.id}`)).status).toBe(404);
+    for(const [method,path,body] of [['GET','/menu/settings',undefined],['GET','/menu/items',undefined],['PUT','/menu/settings',{published:true}],
+      ['PUT',`/items/${beef}/menu`,{category:'X'}],['GET',`/media/${up.json.id}`,undefined],['DELETE',`/media/${up.json.id}`,undefined]] as const)
+      expect((await api.call(method,path,{token:A.ownerToken,body})).status,`${method} ${path}`).toBe(403);
+    expect((await api.call('GET','/me',as(A.ownerToken))).json.modules).not.toContain('online');
+    expect((await api.call('PATCH',`/items/${beef}`,{token:A.ownerToken,body:{price:130}})).status).toBe(200);   // catalog is core
+    expect((await setModule(A.ownerToken,'online',true)).status).toBe(200);                  // data kept: photo and menu come back
+    expect((await menu()).json.items.find((i:any)=>i.id===beef).media).toHaveLength(1);
+  });
+});

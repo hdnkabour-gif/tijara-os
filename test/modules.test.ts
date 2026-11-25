@@ -16,8 +16,8 @@ const ALLOWED: Record<string, string[]> = {
   control: ['audit', 'auth', 'db', 'http', 'kit'],
   support: ['audit', 'auth', 'db', 'http', 'kit'],
   orders: ['audit', 'commands', 'db', 'http', 'kit', 'sales'],
-  menu: ['audit', 'db', 'entitlements', 'http', 'kit', 'mediafile', 'mediastore'],
-  public: ['clock', 'commands', 'db', 'http', 'kit', 'menu', 'orders'],
+  menu: ['audit', 'db', 'http', 'kit', 'mediafile', 'mediastore'],
+  public: ['clock', 'commands', 'db', 'entitlements', 'http', 'kit', 'menu', 'orders'],
   mediafile: [], mediastore: [],
   server: ['api', 'db'], migrate: ['bootstrap'], bootstrap: [],           // entrypoints: no business-module dependencies
   commands: ['db', 'errors'],

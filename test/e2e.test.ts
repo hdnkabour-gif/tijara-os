@@ -1030,7 +1030,7 @@ describe('web UI in a real browser', () => {
     } finally { delete process.env.OWNER_RECOVERY; }
   }, 90_000);
 
-  it('E24: the owner switches the kitchen off from Settings on an Arabic phone: the menu changes at once, the data stays', async () => {
+  it('E24: the owner switches the kitchen and the online menu off from Settings on an Arabic phone: the navigation changes at once (AR phone + FR desktop), the data stays', async () => {
     const shop = await createShop(api, admin, 'pro', 'Grill modules UI', ['grill', 'butcher']);
     const own = await newPage({ mobile: true, locale: 'ar-MA' });
     await uiLogin(own.page, shop.ownerEmail);
@@ -1051,7 +1051,23 @@ describe('web UI in a real browser', () => {
     await own.page.goto(`${base}/app/#/settings`);
     await own.page.locator('#mod-kitchen').check();
     await own.page.locator('nav a[href="#/grill"]').waitFor();
+    // the online menu is a module too: switched off, its page leaves the menu (catalog stays)
+    expect(await own.page.locator('nav a[href="#/menu"]').count()).toBe(1);
+    await own.page.locator('#mod-online').uncheck();
+    await own.page.locator('nav a[href="#/menu"]').waitFor({ state: 'detached' });
+    expect(await own.page.locator('nav a[href="#/items"]').count()).toBe(1);
+    await fitsPhone(own.page);
     expect(own.problems).toEqual([]);
     await own.ctx.close();
+    // same shop on a French desktop: no menu link, and the direct address falls back to the dashboard
+    const fr = await newPage();
+    await uiLogin(fr.page, shop.ownerEmail);
+    await fr.page.waitForSelector('#tile-sales');
+    expect(await fr.page.locator('nav a[href="#/menu"]').count()).toBe(0);
+    await fr.page.goto(`${base}/app/#/menu`);
+    await fr.page.waitForSelector('#tile-sales');
+    expect(fr.page.url()).not.toMatch(/\/menu$/);
+    expect(fr.problems).toEqual([]);
+    await fr.ctx.close();
   }, 60_000);
 });
