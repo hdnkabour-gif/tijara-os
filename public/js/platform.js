@@ -57,11 +57,13 @@ function openCreate(activities, plans, done) {
     ...field(t('ownerEmail'), oemail, 'oe'), ...field(t('ownerPassword'), opw, 'op'));
   opw.required = true;
   const checks = activities.map((a) => ({ id: a.id, box: h('input', { type: 'checkbox', id: `act-${a.id}`, value: a.id }) }));
+  // a real shop starts with an EMPTY catalog; example products are only for demos (refused on a production server)
+  const demo = h('input', { type: 'checkbox', id: 'starter-catalog' });
   const m = modal(t('newShop'), h('form', { onsubmit: async (e) => {
     e.preventDefault(); err.replaceChildren();
     try {
       await api('POST', '/platform/tenants', { name: name.value, slug: slug.value, plan: plan.value, activities: checks.filter((c) => c.box.checked).map((c) => c.id),
-        owner: { name: oname.value, email: oemail.value, password: opw.value } });
+        starterCatalog: demo.checked, owner: { name: oname.value, email: oemail.value, password: opw.value } });
       toast(t('created')); m.close();
       await done();
     } catch (ex) { err.replaceChildren(errorBox(friendly(ex))); }
@@ -69,6 +71,7 @@ function openCreate(activities, plans, done) {
     ...field(t('name'), name, 'sn'), ...field(t('slug'), slug, 'ss'), ...field(t('plan'), plan, 'sp'),
     h('label', null, t('activities')),
     h('div', { class: 'chips' }, activities.map((a, i) => h('label', { class: 'chip', for: `act-${a.id}` }, checks[i].box, ` ${a.label[getLang()]}`))),
+    h('label', { class: 'chip', for: 'starter-catalog' }, demo, ` ${t('starterCatalog')}`),
     ownerFields, err,
     h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, t('create')), h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, t('cancel')))));
 }
@@ -96,7 +99,7 @@ export function openControls(shop,plans,done){
   const modules=[
     ['kitchen',txt('Cuisine / grill','المطبخ والمشوي')],['workshop',txt('Atelier mécanique','ورشة الميكانيك')],
     ['purchases',txt('Achats / fournisseurs','المشتريات والموردون')],['cash',txt('Clôture de caisse','إغلاق الصندوق')],
-    ['production',txt('Transformation','تحويل اللحوم')],['bookings',txt('Commandes / réservations','الطلبات والحجوزات')],
+    ['production',txt('Transformation','تحويل اللحوم')],['orders',txt('Prise de commandes','استقبال الطلبات')],['bookings',txt('Réservations','الحجوزات')],
     ['delivery',txt('Livraison','التوصيل')],['online',txt('Menu & commandes en ligne','القائمة والطلب عبر الإنترنت')]
   ].map(([key,label])=>{
     const v=shop.feature_overrides?.[key];

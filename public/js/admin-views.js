@@ -1,5 +1,6 @@
 import { brandingCard } from './control-views.js';
 import { ownerSupportCard } from './support-views.js';
+import { modulesCard } from './modules-views.js';
 import { api, confirmBox, errorBox, field, friendly, h, modal, put, toast } from './lib.js';
 import { dateFmt, money, qtyFmt, roleLabel, t, uom } from './i18n.js';
 
@@ -94,7 +95,7 @@ export async function rolesView(S) {
           if (!(await confirmBox(t('confirmDelete')))) return;
           try { await api('DELETE', `/roles/${r.id}`); toast(t('deleted')); reload(); } catch (e) { toast(friendly(e), true); }
         }, 'danger', { 'data-action': 'delete' })),
-      h('div', { class: 'chips' }, r.permissions.map((p) => h('span', { class: 'chip static' }, t('p_' + p)))))));
+      h('div', { class: 'chips' }, r.permissions.filter((p) => !r.inactive?.includes(p)).map((p) => h('span', { class: 'chip static' }, t('p_' + p)))))));
   return wrap;
 }
 function editRole(r, groups, done) {
@@ -107,7 +108,9 @@ function editRole(r, groups, done) {
     }))));
   const m = modal(r ? `${t('edit')} — ${roleLabel(r.name)}` : t('newRole'), h('form', { onsubmit: async (e) => {
     e.preventDefault();
-    const permissions = boxes.filter((b) => b.box.checked).map((b) => b.p);
+    // permissions of modules that are off are not shown: keep the ones the role already has (inactive, not lost)
+    const shown = new Set(boxes.map((b) => b.p));
+    const permissions = [...boxes.filter((b) => b.box.checked).map((b) => b.p), ...(r?.permissions ?? []).filter((p) => !shown.has(p))];
     try {
       if (r) await api('PATCH', `/roles/${r.id}`, { permissions, ...(!r.system && name.value !== r.name ? { name: name.value } : {}) });
       else await api('POST', '/roles', { name: name.value, permissions });
@@ -123,6 +126,10 @@ export async function settingsView(S) {
   const branding = can(S, 'settings.manage') && !S.me.support ? await api('GET', '/tenant/branding') : null;
   const isOwner = !S.me.support && S.me.tenants?.find((m) => m.tenant_id === S.me.activeTenantId)?.role_name === 'owner';
   const supportCard = isOwner ? await ownerSupportCard() : null;
+  // modules: everyone with settings rights sees them, only the owner switches them; the shell redraws with the new menu
+  const modsCard = can(S, 'settings.manage') && !S.me.support ? await modulesCard(S, isOwner, async () => {
+    S.me = await api('GET', '/me'); window.dispatchEvent(new HashChangeEvent('hashchange'));
+  }) : null;
   const wrap = h('div'); const reload = () => settingsView(S).then((v) => wrap.replaceWith(v));
   const c = tenant.company ?? {};
   const inp = (id, v, attrs = {}) => h('input', { id, value: v ?? '', ...attrs });
@@ -152,7 +159,7 @@ export async function settingsView(S) {
       S.branding = await api('GET', '/tenant/branding');
       window.dispatchEvent(new HashChangeEvent('hashchange'));     // redraw the shell: new colors and logo everywhere
     }),
-    supportCard);
+    modsCard, supportCard);
   return wrap;
 }
 function nameDialog(title, value, save) {

@@ -1,3 +1,4 @@
+import { shopModules, type ModuleId } from './entitlements.js';
 import crypto from 'node:crypto';
 import { audit } from './audit.js';
 import { withTenant } from './db.js';
@@ -36,11 +37,9 @@ export function parseHours(v: unknown): Record<string, [string, string][]> {
 }
 
 /** Is a module enabled for this shop (plan + platform override)? */
-export async function shopHasFeature(c: any, tenantId: string, feature: string) {
-  const r = (await c.query(`SELECT p.features, COALESCE(q.feature_overrides,'{}'::jsonb) AS o FROM tenants t JOIN plans p ON p.id=t.plan_id
-      LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=$1`, [tenantId])).rows[0];
-  if (!r) return false;
-  return typeof r.o?.[feature] === 'boolean' ? r.o[feature] : Array.isArray(r.features) && r.features.includes(feature);
+/** A module is usable when the platform allows it AND the shop has it switched on (see entitlements.ts). */
+export async function shopHasFeature(c: any, tenantId: string, feature: ModuleId) {
+  return (await shopModules(c, tenantId)).has(feature);
 }
 
 export function registerMenuRoutes(k: Kit) {

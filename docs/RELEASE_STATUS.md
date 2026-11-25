@@ -3,13 +3,14 @@
 Short, factual log of what is merged, deployed and authorized. Update it in every PR that changes the release state.
 Statuses per change: **code accepted → merged → staging validated → production validated → real data authorized**.
 
-## Current state (2026-11-24)
+## Current state (2026-11-25)
 
 | Item | State |
 |---|---|
-| `main` | `427e567` (D1 #18 merged). CI PG16 + PG18 green: [run 45399578063](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45399578063) |
-| Staging (Railway project `tijara-os-staging`, environment `staging`) | app + migrator run `427e567`; `/ready`: `pendingMigrations 0`, `unprotectedTables 0`, `rlsBypassPossible false` |
-| Migrations live on staging | 001 → 014 (011 on 2026-11-23; 012, 013 and 014 on 2026-11-24; each logged by the migrator) |
+| `main` | `5df5c2e` (PR #23 merged). CI PG16 + PG18 green: [run 45636940355](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45636940355) |
+| Staging (Railway project `tijara-os-staging`, environment `staging`) | app + migrator run `5df5c2e`; `/ready`: `pendingMigrations 0`, `unprotectedTables 0`, `rlsBypassPossible false` |
+| Migrations live on staging | 001 → 016 (011 on 2026-11-23; 012–015 on 2026-11-24; 016 on 2026-11-25; each logged by the migrator) |
+| Owner recovery (`OWNER_RECOVERY`) | **off** on staging and production (opt-in `claim-link`, synthetic staging pilots only, owner decision) |
 | Production | **does not exist yet**. No separate project, database, domain or secrets. Nothing is "production validated". |
 | Real data | **not authorized**. Blocked by the production gate below. |
 | Repository visibility | **public** (owner action pending: Settings → General → Danger Zone → Private). History may already have been copied. |
@@ -24,7 +25,9 @@ Statuses per change: **code accepted → merged → staging validated → produc
 | #16 | PR-C: owner-approved, time-limited, revocable support access; every support request journaled (migration 013) | ✅ | ✅ `c6c22b2` | ✅ with #17 | — | — |
 | #17 | fix: long text / action groups widened phone screens; phone-width checks compared with the real screen width | ✅ | ✅ `f9ec9db` | ✅ `f9ec9db` | — | — |
 | #18 | D1: product options + order inbox (counter/phone/WhatsApp/table) accepted into the existing sales engine; pay/cancel accepted orders (migration 014) | ✅ | ✅ `427e567` | ✅ `427e567` + migration 014 | — | — |
-| D2 | public menu (QR/link, no account), dish cards with photos/videos on a persistent media store, compose-your-plate, online orders into the D1 inbox, private tracking (migration 015) | in review | — | — | — | — |
+| D2 | public menu (QR/link, no account), dish cards with photos/videos on a persistent media store, compose-your-plate, online orders into the D1 inbox, private tracking (migration 015) | ✅ | ✅ `24817e5` | ✅ `24817e5` + migration 015 | — | — |
+| #23 | platform/support privacy (no merchant data for platform accounts; support = diagnostics only); legacy pilot owner recovery by one-time claim link, off by default (migration 016) | ✅ | ✅ `5df5c2e` | ✅ `5df5c2e` + migration 016 | — | — |
+| #19 | shop modules: plan ∩ platform ∩ owner-enabled module ∩ role ∩ branch; activity = default only; empty catalog for real shops (examples opt-in, demo servers only); branch-scoped invoices/summary/cancel (migration 017) | in review | — | — | — | — |
 
 ## Known gaps and risks (open)
 

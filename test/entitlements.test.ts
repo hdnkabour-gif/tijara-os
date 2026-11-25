@@ -69,7 +69,7 @@ describe('shop activity, subscription, owner settings and employee grants',()=>{
     const manager=await staff(api,A,'manager',[A.branchId]), cashier=await staff(api,A,'cashier',[A.branchId]);
     expect((await api.call('GET','/invoices',{token:manager.token})).json.invoices.map((r:any)=>r.id)).toEqual([sales[0]]);
     expect((await api.call('GET','/invoices/'+sales[1],{token:manager.token})).status).toBe(404);
-    expect((await api.call('GET','/reports/summary',{token:manager.token})).json.salesToday).toBe(10);
+    expect(Number((await api.call('GET','/reports/summary',{token:manager.token})).json.salesToday)).toBe(10);   // money stays a decimal string (as in api.test.ts)
     for(const p of ['catalog.manage','report.view_profit','settings.manage','users.manage','cash.manage'])
       expect((await me(cashier.token)).permissions).not.toContain(p);
     expect((await api.call('PATCH','/items/'+item,{token:cashier.token,body:{price:1}})).status).toBe(403);

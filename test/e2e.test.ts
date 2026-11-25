@@ -248,6 +248,8 @@ describe('web UI in a real browser', () => {
     await page.getByRole('button', { name: /Nouvel établissement/ }).click();
     await page.fill('#sn', 'Butcher E2E'); await page.fill('#ss', slug);
     await page.locator('#act-butcher').check(); await page.locator('#act-grill').check();
+    expect(await page.locator('#starter-catalog').isChecked()).toBe(false);              // a real shop starts empty
+    await page.locator('#starter-catalog').check();                                     // this test server is a demo
     const ownerEmail = `owner.${slug}@test.local`;
     expect(await page.locator('#self-owner').count()).toBe(0);
     await page.fill('#on', 'Owner E2E'); await page.fill('#oe', ownerEmail); await page.fill('#op', PW);
@@ -1027,4 +1029,29 @@ describe('web UI in a real browser', () => {
       await own.ctx.close();
     } finally { delete process.env.OWNER_RECOVERY; }
   }, 90_000);
+
+  it('E24: the owner switches the kitchen off from Settings on an Arabic phone: the menu changes at once, the data stays', async () => {
+    const shop = await createShop(api, admin, 'pro', 'Grill modules UI', ['grill', 'butcher']);
+    const own = await newPage({ mobile: true, locale: 'ar-MA' });
+    await uiLogin(own.page, shop.ownerEmail);
+    await own.page.waitForSelector('#tile-sales');
+    expect(await own.page.locator('nav a[href="#/grill"]').count()).toBe(1);
+    expect(await own.page.locator('nav a[href="#/vehicles"]').count()).toBe(0);
+    await own.page.goto(`${base}/app/#/settings`);
+    await own.page.locator('#modules-card').waitFor();
+    expect(await own.page.locator('[data-module="workshop"] input').isChecked()).toBe(false);
+    expect(await own.page.locator('[data-module="workshop"] .switch').innerText()).toContain('معطّلة');   // the label says the real state
+    expect(await own.page.locator('[data-module="delivery"] input').count()).toBe(0);         // planned: shown as "soon", not a switch
+    await fitsPhone(own.page); await shot(own.page, 'e24-modules-ar');
+    await own.page.locator('#mod-kitchen').uncheck();
+    await own.page.locator('nav a[href="#/grill"]').waitFor({ state: 'detached' });
+    await own.page.goto(`${base}/app/#/grill`);
+    await own.page.waitForSelector('#tile-sales');                                          // hidden route: back to the dashboard
+    expect(own.page.url()).not.toMatch(/\/grill$/);
+    await own.page.goto(`${base}/app/#/settings`);
+    await own.page.locator('#mod-kitchen').check();
+    await own.page.locator('nav a[href="#/grill"]').waitFor();
+    expect(own.problems).toEqual([]);
+    await own.ctx.close();
+  }, 60_000);
 });

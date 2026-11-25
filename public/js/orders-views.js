@@ -114,7 +114,9 @@ export async function ordersView(S) {
     mode.addEventListener('change', () => { tableBox.hidden = mode.value !== 'dine_in'; table.required = mode.value === 'dine_in'; });
     const name = h('input', { id: 'o-name', maxlength: '100' }), phone = h('input', { id: 'o-phone', type: 'tel', dir: 'ltr', maxlength: '30' });
     const wanted = h('input', { id: 'o-wanted', type: 'datetime-local' }), note = h('input', { id: 'o-note', maxlength: '300' });
-    const kitchen = h('input', { id: 'o-kitchen', type: 'checkbox', checked: S.me.permissions.includes('kitchen.view') });
+    // the kitchen choice exists only in a shop whose kitchen module is on (the server refuses it otherwise)
+    const hasKitchen = (S.me.modules ?? []).includes('kitchen');
+    const kitchen = h('input', { id: 'o-kitchen', type: 'checkbox', checked: hasKitchen });
     const linesBox = h('div', { id: 'o-lines' }), lines = []; let n = 0;
     const addLine = () => {
       const i = n++, product = sel(`o-item-${i}`, items.map((it) => opt(it.id, `${it.name} · ${money(it.price)}${it.base_uom === 'kg' ? '/kg' : ''}`)));
@@ -152,7 +154,7 @@ export async function ordersView(S) {
     } }, h('div', { class: 'grid tiles' }, h('div', null, ...field(o('channel'), channel, 'o-channel')), h('div', null, ...field(o('mode'), mode, 'o-mode'))),
       tableBox, ...field(o('customer'), name, 'o-name'), ...field(o('phone'), phone, 'o-phone'), ...field(o('wanted'), wanted, 'o-wanted'),
       linesBox, btn(`+ ${o('addLine')}`, addLine), ...field(o('note'), note, 'o-note'),
-      h('div', { class: 'perm-row' }, kitchen, h('label', { for: 'o-kitchen' }, o('toKitchen'))), box,
+      hasKitchen && h('div', { class: 'perm-row' }, kitchen, h('label', { for: 'o-kitchen' }, o('toKitchen'))), box,
       h('div', { class: 'row' }, submit, btn(o('close'), () => m.close()))));
   };
   await render();

@@ -19,6 +19,7 @@ import { registerOrderRoutes } from './orders.js';
 import { registerMenuRoutes } from './menu.js';
 import { registerPublicRoutes } from './public.js';
 import { mediaStoreFromEnv, type MediaStore } from './mediastore.js';
+import { ENTITLEMENT_SQL, PLATFORM_FEATURES, effectiveSet, moduleOf, moduleStates, permAllowed, type ModuleId } from './entitlements.js';
 import type { Handler, Rc } from './kit.js';
 import { cancelOrder, quickSale } from './sales.js';
 import { HttpError, RateLimiter, arr, bad, email, num, oneOf, optNum, optStr, optUuid, readJson, readRaw, send, str, uuid } from './http.js';
@@ -50,14 +51,13 @@ export function createApp(d: AppDeps): http.RequestListener {
   const loginByIp = new RateLimiter(30, 15 * 60_000), loginByEmail = new RateLimiter(10, 15 * 60_000), forgotByIp = new RateLimiter(10, 15 * 60_000);
 
   /** Resolve tenant context from the SESSION only (never from the request), check membership, permission and branch scope. */
-  async function authorize(rc: Rc, perm: string) {
+  async function authorize(rc: Rc, perm: string, opts: { module?: ModuleId } = {}) {
     const s = rc.session!;
     if (!s.activeTenantId) throw new HttpError(400, 'NO_TENANT', 'select a tenant first (POST /auth/switch-tenant)');
     const ctx = { tenantId: s.activeTenantId, userId: s.userId };
     const row = (await withTenant(d.runtime, ctx, (c) => c.query(
       `SELECT m.branch_ids, r.name AS role_name, t.status AS shop_status, t.plan_id AS shop_plan,
-              t.trial_expires_at AS trial_expires_at, p.features AS plan_features,
-              COALESCE(q.feature_overrides,'{}'::jsonb) AS feature_overrides,
+              t.trial_expires_at AS trial_expires_at, ${ENTITLEMENT_SQL},
               COALESCE((SELECT array_agg(rp.permission) FROM role_permissions rp WHERE rp.tenant_id = m.tenant_id AND rp.role_id = m.role_id), '{}') AS perms
          FROM memberships m JOIN roles r ON r.tenant_id = m.tenant_id AND r.id = m.role_id
          JOIN tenants t ON t.id=m.tenant_id JOIN plans p ON p.id=t.plan_id
@@ -67,21 +67,14 @@ export function createApp(d: AppDeps): http.RequestListener {
     if (row.shop_status !== 'active') throw new HttpError(423,'SHOP_SUSPENDED','shop access has been temporarily suspended; all data is retained');
     if (row.shop_plan === 'trial' && row.trial_expires_at && new Date(row.trial_expires_at) <= new Date())
       throw new HttpError(423,'TRIAL_EXPIRED','trial expired; all shop records are retained');
-    const feature = perm.startsWith('kitchen.') ? 'kitchen'
-      : perm.startsWith('workshop.') ? 'workshop'
-      : perm.startsWith('purchases.') ? 'purchases'
-      : perm.startsWith('cash.') ? 'cash'
-      : perm.startsWith('production.') ? 'production'
-      : perm.startsWith('bookings.') ? 'bookings'
-      : perm.startsWith('delivery.') ? 'delivery' : 'core';
-    const overridden = row.feature_overrides?.[feature];
-    if (!(feature==='core' || (typeof overridden==='boolean' ? overridden
-      : Array.isArray(row.plan_features) && row.plan_features.includes(feature))))
-      throw new HttpError(403,'FEATURE_NOT_IN_PLAN',`feature ${feature} unavailable for this shop`);
+    const modules = effectiveSet(moduleStates(row.plan_features, row.feature_overrides, row.shop_off));
+    for (const m of [moduleOf(perm), opts.module ?? 'core'])
+      if (m !== 'core' && !modules.has(m)) throw new HttpError(403,'FEATURE_NOT_IN_PLAN',`module ${m} is not enabled for this shop`);
     if (!row.perms.includes(perm)) throw new HttpError(403, 'FORBIDDEN', `missing permission ${perm}`);
     const branchIds: string[] = row.branch_ids;
     return {
-      ctx: ctx as { tenantId: string; userId: string }, branchIds, permissions: row.perms as string[], roleName: row.role_name as string,
+      ctx: ctx as { tenantId: string; userId: string }, branchIds, roleName: row.role_name as string, modules,
+      permissions: (row.perms as string[]).filter((p) => permAllowed(modules, p)),
       assertBranch(branchId: string) {
         if (branchIds.length > 0 && !branchIds.includes(branchId)) throw new HttpError(403, 'FORBIDDEN', 'branch not in your scope');
       },
@@ -140,28 +133,22 @@ export function createApp(d: AppDeps): http.RequestListener {
         activeTenantId:support ? s.activeTenantId : null,tenants:[],permissions:[],support}};
     }
     const tenants = await authm.listTenants(d.runtime, s.userId);
-    let permissions: string[] = [];
+    let permissions: string[] = [], modules: string[] = [];
     if (s.activeTenantId) {
       const result = await withTenant(d.runtime, { tenantId:s.activeTenantId,userId:s.userId }, async(c) => {
-        const ps = (await c.query(`SELECT t.status,t.plan_id,t.trial_expires_at,p.features,COALESCE(q.feature_overrides,'{}'::jsonb) AS overrides
+        const ps = (await c.query(`SELECT t.status,t.plan_id,t.trial_expires_at,${ENTITLEMENT_SQL}
           FROM tenants t JOIN plans p ON p.id=t.plan_id LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=$1`,
           [s.activeTenantId])).rows[0];
-        if (!ps || ps.status!=='active' || (ps.plan_id==='trial' && ps.trial_expires_at && new Date(ps.trial_expires_at)<=new Date())) return [];
+        if (!ps || ps.status!=='active' || (ps.plan_id==='trial' && ps.trial_expires_at && new Date(ps.trial_expires_at)<=new Date())) return { perms: [], mods: [] };
         const list = (await c.query(`SELECT rp.permission FROM memberships m JOIN role_permissions rp
           ON rp.tenant_id=m.tenant_id AND rp.role_id=m.role_id
           WHERE m.tenant_id=$1 AND m.user_id=$2 AND m.active ORDER BY 1`,[s.activeTenantId,s.userId])).rows;
-        const entitled=(perm:string)=>{
-          const feature=perm.startsWith('kitchen.')?'kitchen':perm.startsWith('workshop.')?'workshop'
-            :perm.startsWith('purchases.')?'purchases':perm.startsWith('cash.')?'cash'
-            :perm.startsWith('production.')?'production':perm.startsWith('bookings.')?'bookings'
-            :perm.startsWith('delivery.')?'delivery':'core';
-          return feature==='core'||(typeof ps.overrides?.[feature]==='boolean'?ps.overrides[feature]:ps.features.includes(feature));
-        };
-        return list.map(x=>x.permission as string).filter(entitled);
+        const eff = effectiveSet(moduleStates(ps.plan_features, ps.feature_overrides, ps.shop_off));
+        return { perms: list.map(x=>x.permission as string).filter((p)=>permAllowed(eff,p)), mods: list.length ? [...eff].sort() : [] };
       });
-      permissions = result;
+      permissions = result.perms; modules = result.mods;
     }
-    return { body: { user: { id: s.userId, name: s.name, email: s.email }, isPlatformAdmin: false, activeTenantId: s.activeTenantId, tenants, permissions, support: null } };
+    return { body: { user: { id: s.userId, name: s.name, email: s.email }, isPlatformAdmin: false, activeTenantId: s.activeTenantId, tenants, permissions, modules, support: null } };
   });
 
   add('GET', '/activities', 'session', async () => ({ body: { activities: ACTIVITIES.map((a) => ({ id: a.id, label: a.label, sampleItems: a.items.length })) } }));
@@ -195,7 +182,7 @@ export function createApp(d: AppDeps): http.RequestListener {
     let features: Record<string,boolean>|null = null;
     if (b.features !== undefined) {
       if (!b.features || typeof b.features!=='object' || Array.isArray(b.features)) throw bad('features must be an object');
-      const allowed = ['kitchen','workshop','purchases','cash','production','bookings','delivery','online'];
+      const allowed = PLATFORM_FEATURES;
       features={};
       for (const [key,value] of Object.entries(b.features)) {
         if (!allowed.includes(key)||typeof value!=='boolean') throw bad('invalid feature override');
@@ -229,10 +216,15 @@ export function createApp(d: AppDeps): http.RequestListener {
     if (pwErr) throw bad(pwErr);
     const slug = str(o.slug, 'slug', 40).toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(slug)) throw bad('slug must be lowercase letters, digits, dashes');
+    // example products are for isolated demos only: a real shop starts with an empty catalog
+    const starterCatalog = o.starterCatalog === true;
+    if (starterCatalog && d.production && process.env.DEMO_CATALOG !== 'on')
+      throw new HttpError(403, 'DEMO_DISABLED', 'example products are only available on a demo server');
     const t = await platformCreateShop(d.platform, d.runtime, rc.session!.userId, {
       name: str(o.name, 'name'), slug, plan: oneOf(o.plan, 'plan', ['trial', 'basic', 'pro', 'complete']),
       activities: (o.activities == null ? [] : arr(o.activities, 'activities', 10)).map((a: unknown) => oneOf(a, 'activities[]', activityIds as readonly string[])),
       owner: { email: email(o.owner?.email), name: str(o.owner?.name, 'owner.name'), passwordHash: await authm.hashPassword(o.owner.password) },
+      starterCatalog,
     });
     return { status: 201, body: { tenantId: t.tenantId, branchId: t.branchId, ownerUserId: t.ownerId } };
   });
@@ -380,6 +372,9 @@ export function createApp(d: AppDeps): http.RequestListener {
   add('POST', '/sales/:orderId/cancel', 'session', async (rc) => {
     const a = await authorize(rc, 'sale.void');
     const p = { orderId: uuid(rc.params.orderId, 'orderId'), reason: str(rc.body.reason, 'reason', 300), committed: rc.body.committed == null ? undefined : oneOf(rc.body.committed, 'committed', ['return', 'waste'] as const) };
+    const order = (await withTenant(d.runtime, a.ctx, (c) => c.query('SELECT branch_id FROM sales_orders WHERE id=$1', [p.orderId]))).rows[0];
+    if (!order) throw new HttpError(404, 'NOT_FOUND', 'order not found');
+    a.assertBranch(order.branch_id);
     await runCommand(d.runtime, a.ctx, { key: idemKey(rc), type: 'cancel_order', payload: p }, (cc) => cancelOrder(cc, p));
     return { body: { status: 'cancelled' } };
   });
@@ -388,15 +383,20 @@ export function createApp(d: AppDeps): http.RequestListener {
     const rows = (await withTenant(d.runtime, a.ctx, (c) => c.query(
       `SELECT i.id, i.invoice_no, i.order_id, i.total, i.status, i.created_at,
               COALESCE((SELECT sum(amount) FROM payment_allocations pa WHERE pa.invoice_id=i.id),0) AS paid
-         FROM invoices i ORDER BY i.created_at DESC LIMIT 100`))).rows;
+         FROM invoices i JOIN sales_orders o ON o.tenant_id=i.tenant_id AND o.id=i.order_id
+        WHERE cardinality($1::uuid[])=0 OR o.branch_id=ANY($1::uuid[])
+        ORDER BY i.created_at DESC LIMIT 100`, [a.branchIds]))).rows;
     return { body: { invoices: rows } };
   });
   add('GET', '/reports/summary', 'session', async (rc) => {
     const a = await authorize(rc, 'report.view');
     const r = (await withTenant(d.runtime, a.ctx, (c) => c.query(
-      `SELECT (SELECT COALESCE(sum(total),0) FROM invoices WHERE status='issued' AND created_at >= date_trunc('day', now())) AS sales_today,
-              (SELECT count(*)::int FROM invoices WHERE status='issued' AND created_at >= date_trunc('day', now())) AS invoices_today,
-              (SELECT COALESCE(sum(amount),0) FROM receivable_entries) AS receivables`))).rows[0];
+      `WITH scoped AS (SELECT i.* FROM invoices i JOIN sales_orders o ON o.tenant_id=i.tenant_id AND o.id=i.order_id
+                        WHERE cardinality($1::uuid[])=0 OR o.branch_id=ANY($1::uuid[]))
+       SELECT (SELECT COALESCE(sum(total),0) FROM scoped WHERE status='issued' AND created_at >= date_trunc('day', now())) AS sales_today,
+              (SELECT count(*)::int FROM scoped WHERE status='issued' AND created_at >= date_trunc('day', now())) AS invoices_today,
+              -- customer balances span branches: a branch-limited member does not see the shop-wide total
+              CASE WHEN cardinality($1::uuid[])=0 THEN (SELECT COALESCE(sum(amount),0) FROM receivable_entries) END AS receivables`, [a.branchIds]))).rows[0];
     return { body: { salesToday: r.sales_today, invoicesToday: r.invoices_today, receivables: r.receivables } };
   });
 
@@ -425,6 +425,7 @@ export function createApp(d: AppDeps): http.RequestListener {
       case '23514': return { status: 400, code: 'VALIDATION', message: 'value violates a data rule' };
       case '22P02': case '22003': return { status: 400, code: 'VALIDATION', message: 'invalid value' };
       case '42501': return { status: 403, code: 'FORBIDDEN', message: 'not allowed' };
+      case 'TJ403': return { status: 403, code: 'PLAN_UPGRADE_REQUIRED', message: 'a trial shop cannot receive modules outside its plan' };
       case 'P0001': return { status: 403, code: 'QUOTA', message: String(e.message).replace(/^.*?(plan .*)$/s, '$1') };
     }
     console.error('internal error', typeof e?.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(e.code) ? e.code : 'UNCLASSIFIED');

@@ -15,7 +15,7 @@ export async function dashboardView(S) {
     h('div', { class: 'grid tiles' },
       h('div', { class: 'tile', id: 'tile-sales' }, h('div', { class: 'v' }, money(sum.salesToday)), h('div', { class: 'l' }, t('salesToday'))),
       h('div', { class: 'tile', id: 'tile-invoices' }, h('div', { class: 'v' }, String(sum.invoicesToday)), h('div', { class: 'l' }, t('invoicesToday'))),
-      h('div', { class: 'tile', id: 'tile-receivables' }, h('div', { class: 'v' }, money(sum.receivables)), h('div', { class: 'l' }, t('receivables')))),
+      sum.receivables != null && h('div', { class: 'tile', id: 'tile-receivables' }, h('div', { class: 'v' }, money(sum.receivables)), h('div', { class: 'l' }, t('receivables')))),
     h('div', { class: 'card' }, h('h2', null, t('quickActions')), h('div', { class: 'row' },
       can(S, 'sale.create') && h('a', { class: 'btn primary', href: '#/pos' }, t('nav_pos')),
       can(S, 'stock.receive') && h('a', { class: 'btn', href: '#/stock' }, t('receive')),
@@ -51,7 +51,7 @@ export async function itemsView(S, query) {
     h('td', null, t(typeOf(i))), h('td', { class: 'num' }, money(i.price)),
     h('td', null, manage && h('div', { class: 'row-actions' },
       h('button', { class: 'btn', type: 'button', 'data-action': 'edit', onclick: () => editItem(i, reload) }, t('edit')),
-      i.active && h('button', { class: 'btn', type: 'button', 'data-action': 'options', onclick: () => editOptions(i, items, reload).catch((e) => toast(friendly(e), true)) }, optionsLabel()),
+      i.active && (S.me.modules ?? []).includes('orders') && h('button', { class: 'btn', type: 'button', 'data-action': 'options', onclick: () => editOptions(i, items, reload).catch((e) => toast(friendly(e), true)) }, optionsLabel()),
       h('button', { class: 'btn danger', type: 'button', 'data-action': 'delete', onclick: async () => {
         if (!(await confirmBox(`${t('confirmDelete')} ${i.name}`))) return;
         try { await api('DELETE', `/items/${i.id}`); toast(t('deleted')); reload(); } catch (e) { toast(friendly(e), true); }
