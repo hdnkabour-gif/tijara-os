@@ -1,6 +1,8 @@
 import { audit } from './audit.js';
 import { withTenant } from './db.js';
-import { HttpError, bad, str, uuid } from './http.js';
+import { HttpError, bad, email, str, uuid } from './http.js';
+import { checkPasswordPolicy, hashPassword } from './auth.js';
+import { createUser } from './tenancy.js';
 import type { Kit, Rc } from './kit.js';
 
 /**
@@ -20,9 +22,11 @@ const usage = (row: any) => LIMITS.map(([used, max]) => ({ key: used, used: Numb
   pct: row[max] ? Math.round((Number(row[used] ?? 0) / Number(row[max])) * 100) : 0 }));
 
 /** Alerts derived from real data only (no invented numbers). */
-function alertsFor(t: any, now = Date.now()) {
+function alertsFor(t: any, now = Date.now(), noOwner = new Set<string>()) {
   const out: { tenantId: string; shop: string; kind: string; detail: string }[] = [];
   const push = (kind: string, detail: string) => out.push({ tenantId: t.id, shop: t.name, kind, detail });
+  // only a platform account owns this shop: nobody can run it until it gets a real owner
+  if (noOwner.has(t.id)) push('no_owner', '');
   if (t.status === 'suspended') push('suspended', t.status_reason ?? '');
   if (t.status === 'trial_expired') push('trial_expired', String(t.trial_expires_at ?? ''));
   else if (t.plan_id === 'trial' && t.trial_expires_at && new Date(t.trial_expires_at).getTime() - now < 7 * 86400000) push('trial_ending', String(t.trial_expires_at));
@@ -45,6 +49,7 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
   add('GET', '/platform/overview', 'session', async (rc) => {
     platformOnly(rc);
     const tenants = (await platform.query('SELECT * FROM platform_list_tenant_controls()')).rows;
+    const noOwner = new Set<string>((await platform.query('SELECT platform_tenants_without_owner() AS id')).rows.map((r) => r.id));
     const byStatus: Record<string, number> = {}, byPlan: Record<string, number> = {};
     for (const t of tenants) { byStatus[t.status] = (byStatus[t.status] ?? 0) + 1; byPlan[t.plan_id] = (byPlan[t.plan_id] ?? 0) + 1; }
     let pending: number | null = null;
@@ -63,7 +68,7 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
     return { body: {
       shops: tenants.length, byStatus, byPlan,
       users: tenants.reduce((a, t) => a + Number(t.users), 0),
-      alerts: tenants.flatMap((t) => alertsFor(t)),
+      alerts: tenants.flatMap((t) => alertsFor(t, Date.now(), noOwner)),
       health: {
         version: info.version, pendingMigrations: pending, lastMigration,
         backup,                                                     // never | failed | stale (> 26 h) | ok
@@ -80,13 +85,31 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
     const t = (await platform.query('SELECT * FROM platform_list_tenant_controls() WHERE id=$1', [id])).rows[0];
     if (!t) throw new HttpError(404, 'NOT_FOUND', 'shop not found');
     const people = (await platform.query('SELECT platform_tenant_people($1) AS p', [id])).rows[0].p;
+    const noOwner = new Set<string>((await platform.query('SELECT platform_tenants_without_owner() AS id')).rows.map((r) => r.id).filter((x) => x === id));
     const history = (await platform.query('SELECT at, action, actor_name, meta FROM platform_audit_feed($1, 50)', [id])).rows;
     return { body: {
       id: t.id, name: t.name, slug: t.slug, plan: t.plan_id, status: t.status, statusReason: t.status_reason,
       trialExpiresAt: t.trial_expires_at, createdAt: t.created_at, activities: t.activities ?? [],
       usage: usage(t), limitOverrides: t.overrides ?? {}, features: effectiveFeatures(t.features, t.feature_overrides),
-      featureOverrides: t.feature_overrides ?? {}, people, alerts: alertsFor(t), history,
+      featureOverrides: t.feature_overrides ?? {}, people, alerts: alertsFor(t, Date.now(), noOwner), needsOwner: noOwner.has(id), history,
     } };
+  });
+
+  /** Give a shop that only a platform account owns ONE real owner (old "self owner" pilots). Refused for any shop that
+   *  already has a merchant owner: the platform can never use this to enter a shop. The initial password follows the
+   *  password policy and is handed to the owner outside the app (no e-mail provider yet); the owner should change it. */
+  add('POST', '/platform/tenants/:id/first-owner', 'session', async (rc) => {
+    platformOnly(rc);
+    const id = uuid(rc.params.id, 'id'), b = rc.body;
+    const pwErr = checkPasswordPolicy(b.password);
+    if (pwErr) throw bad(pwErr);
+    const emailV = email(b.email), name = str(b.name, 'name', 100);
+    const orphan = (await platform.query('SELECT platform_tenants_without_owner() AS id')).rows.some((r) => r.id === id);
+    if (!orphan) throw new HttpError(409, 'HAS_OWNER', 'this shop already has an owner (or does not exist)');
+    const userId = await createUser(platform, emailV, name, await hashPassword(b.password));
+    const r = (await platform.query('SELECT platform_assign_first_owner($1,$2,$3) AS r', [rc.session!.userId, id, userId])).rows[0].r;
+    if (r !== 'ok') throw new HttpError(409, 'HAS_OWNER', 'this shop already has an owner');
+    return { status: 201, body: { status: 'ok' } };
   });
 
   add('GET', '/platform/audit', 'session', async (rc) => {

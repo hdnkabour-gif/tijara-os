@@ -9,7 +9,8 @@ const L = {
     overview: 'Vue d’ensemble', shops: 'Commerces', audit: 'Journal plateforme', health: 'Santé du service',
     shopsTotal: 'Commerces', active: 'Actifs', suspended: 'Suspendus', trialExpired: 'Essais expirés', users: 'Utilisateurs',
     alerts: 'Alertes', noAlerts: 'Aucune alerte : tous les commerces sont dans leurs limites.',
-    k_suspended: 'Commerce suspendu', k_trial_expired: 'Essai expiré', k_trial_ending: 'Essai bientôt terminé', k_quota_full: 'Limite atteinte', k_quota_high: 'Limite presque atteinte',
+    k_suspended: 'Commerce suspendu', k_trial_expired: 'Essai expiré', k_trial_ending: 'Essai bientôt terminé', k_quota_full: 'Limite atteinte', k_quota_high: 'Limite presque atteinte', k_no_owner: 'Sans propriétaire commerçant',
+    'a_tenant.owner_assigned': 'Propriétaire attribué', ownerTitle: 'Donner un propriétaire à ce commerce', ownerIntro: 'Seul un compte plateforme possède ce commerce : personne ne peut l’utiliser. Créez le compte de son vrai propriétaire (aucune donnée n’est supprimée). Remettez-lui le mot de passe initial en main propre ; il devra le changer.', ownerName: 'Nom du propriétaire', ownerEmail: 'E-mail du propriétaire', ownerPw: 'Mot de passe initial (10 caractères min.)', ownerCreate: 'Créer le propriétaire', ownerDone: 'Propriétaire créé',
     version: 'Version en ligne', pending: 'Migrations en attente', lastMigration: 'Dernière migration', backup: 'Sauvegarde externe',
     b_never: 'Aucune sauvegarde enregistrée', b_failed: 'Dernière sauvegarde en échec', b_stale: 'Dernière sauvegarde de plus de 26 h', b_ok: 'Sauvegarde du jour réussie',
     lastOk: 'dernière réussie le', notOffsite: 'copie locale, pas hors Railway', drill: 'Dernier test de restauration', drillNo: 'Jamais vérifié',
@@ -32,7 +33,8 @@ const L = {
     overview: 'نظرة عامة', shops: 'المحلات', audit: 'سجل المنصة', health: 'حالة الخدمة',
     shopsTotal: 'المحلات', active: 'نشطة', suspended: 'موقوفة', trialExpired: 'تجارب منتهية', users: 'المستخدمون',
     alerts: 'التنبيهات', noAlerts: 'لا توجد تنبيهات: كل المحلات داخل حدودها.',
-    k_suspended: 'محل موقوف', k_trial_expired: 'انتهت التجربة', k_trial_ending: 'التجربة على وشك الانتهاء', k_quota_full: 'تم بلوغ الحد', k_quota_high: 'اقترب من الحد',
+    k_suspended: 'محل موقوف', k_trial_expired: 'انتهت التجربة', k_trial_ending: 'التجربة على وشك الانتهاء', k_quota_full: 'تم بلوغ الحد', k_quota_high: 'اقترب من الحد', k_no_owner: 'بدون مالك تاجر',
+    'a_tenant.owner_assigned': 'تعيين مالك', ownerTitle: 'تعيين مالك لهذا المحل', ownerIntro: 'هذا المحل يملكه حساب المنصة فقط: لا أحد يستطيع استعماله. أنشئ حساب مالكه الحقيقي (لا تُحذف أي بيانات). سلّمه كلمة المرور الأولية يداً بيد، وعليه تغييرها.', ownerName: 'اسم المالك', ownerEmail: 'البريد الإلكتروني للمالك', ownerPw: 'كلمة المرور الأولية (10 أحرف على الأقل)', ownerCreate: 'إنشاء المالك', ownerDone: 'تم إنشاء المالك',
     version: 'الإصدار المنشور', pending: 'ترحيلات معلقة', lastMigration: 'آخر ترحيل', backup: 'النسخ الاحتياطي الخارجي',
     b_never: 'لا توجد أي نسخة احتياطية مسجلة', b_failed: 'فشلت آخر نسخة احتياطية', b_stale: 'آخر نسخة أقدم من 26 ساعة', b_ok: 'نجحت نسخة اليوم',
     lastOk: 'آخر نسخة ناجحة في', notOffsite: 'نسخة محلية وليست خارج Railway', drill: 'آخر اختبار استرجاع', drillNo: 'لم يُتحقق منه بعد',
@@ -115,6 +117,18 @@ export async function shopsView() {
   return base;
 }
 
+/** Only for a shop that no merchant owns (old platform-owned pilots): create its real owner. */
+function ownerForm(id, done) {
+  const name = h('input', { id: 'fo-name', required: true, maxlength: '100' }), mail = h('input', { id: 'fo-email', type: 'email', required: true, dir: 'ltr' });
+  const pw = h('input', { id: 'fo-pw', type: 'password', required: true, minlength: '10', autocomplete: 'new-password' }), err = h('div');
+  return h('form', { class: 'card', id: 'first-owner', onsubmit: async (e) => {
+    e.preventDefault(); err.replaceChildren();
+    try { await api('POST', `/platform/tenants/${id}/first-owner`, { name: name.value.trim(), email: mail.value.trim(), password: pw.value }); toast(c('ownerDone')); await done(); }
+    catch (ex) { err.replaceChildren(errorBox(friendly(ex))); }
+  } }, h('h2', null, c('ownerTitle')), h('p', { class: 'note' }, c('ownerIntro')), ...field(c('ownerName'), name, 'fo-name'), ...field(c('ownerEmail'), mail, 'fo-email'),
+    ...field(c('ownerPw'), pw, 'fo-pw'), err, h('button', { class: 'btn primary', type: 'submit' }, c('ownerCreate')));
+}
+
 export async function shop360View(S, query) {
   const id = query.get('id');
   const [s, { plans }] = await Promise.all([api('GET', `/platform/tenants/${encodeURIComponent(id ?? '')}`), api('GET', '/platform/plans')]);
@@ -140,6 +154,7 @@ export async function shop360View(S, query) {
         h('h3', null, c('branches')), h('ul', null, s.people.branches.map((b) => h('li', null, b))))),
     s.alerts.length > 0 && h('section', { class: 'card', id: 'card-alerts' }, h('h2', null, c('alerts')),
       h('ul', null, s.alerts.map((a) => h('li', null, h('span', { class: 'badge bad' }, c(`k_${a.kind}`)), ` ${alertDetail(a)}`)))),
+    s.needsOwner && ownerForm(s.id, reload),
     h('section', { class: 'card', id: 'card-history' }, h('h2', null, c('history')), auditTable(s.history, false)),
     await platformSupportSection(s.id));
   sizeMeters(wrap);

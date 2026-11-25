@@ -60,3 +60,47 @@ LANGUAGE sql SECURITY DEFINER SET search_path=public,pg_temp AS $$
    WHERE p_tenant IS NULL OR a.meta->>'tenantId'=p_tenant::text
    ORDER BY a.at DESC LIMIT LEAST(GREATEST(p_limit,1),500)
 $$;
+
+-- A shop whose ONLY active owner is a platform account (old pilots created with "self owner") would be unreachable once
+-- platform accounts can no longer act as merchants. The platform may give such a shop ONE real owner - and only such a
+-- shop: it can never add an owner to a shop that already has a merchant owner. Nothing is deleted.
+CREATE FUNCTION platform_tenants_without_owner() RETURNS SETOF uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE t record;
+BEGIN
+  FOR t IN SELECT id FROM tenants LOOP
+    PERFORM set_config('app.tenant_id', t.id::text, true);
+    IF NOT EXISTS (SELECT 1 FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id
+                    WHERE m.tenant_id=t.id AND r.name='owner' AND m.active
+                      AND NOT EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id=m.user_id)) THEN
+      RETURN NEXT t.id;
+    END IF;
+  END LOOP;
+  PERFORM set_config('app.tenant_id', '', true);
+END $$;
+CREATE FUNCTION platform_assign_first_owner(p_actor uuid, p_tenant uuid, p_user uuid) RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE v_role uuid;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_admins WHERE user_id=p_actor) THEN RAISE EXCEPTION 'platform admin required' USING ERRCODE='42501'; END IF;
+  IF EXISTS (SELECT 1 FROM platform_admins WHERE user_id=p_user) THEN RETURN 'platform_account'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM tenants WHERE id=p_tenant) THEN RETURN 'not_found'; END IF;
+  PERFORM set_config('app.tenant_id', p_tenant::text, true);
+  PERFORM pg_advisory_xact_lock(hashtext('first_owner:'||p_tenant::text));
+  IF EXISTS (SELECT 1 FROM memberships m JOIN roles r ON r.tenant_id=m.tenant_id AND r.id=m.role_id
+              WHERE m.tenant_id=p_tenant AND r.name='owner' AND m.active
+                AND NOT EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id=m.user_id)) THEN
+    PERFORM set_config('app.tenant_id', '', true);
+    RETURN 'has_owner';
+  END IF;
+  SELECT id INTO v_role FROM roles WHERE tenant_id=p_tenant AND name='owner';
+  INSERT INTO memberships (tenant_id,user_id,role_id,branch_ids,active) VALUES (p_tenant,p_user,v_role,'{}',true)
+    ON CONFLICT (tenant_id,user_id) DO UPDATE SET role_id=EXCLUDED.role_id, branch_ids='{}', active=true;
+  INSERT INTO platform_audit (actor_user_id, action, meta)
+    VALUES (p_actor, 'tenant.owner_assigned', jsonb_build_object('tenantId', p_tenant));
+  PERFORM set_config('app.tenant_id', '', true);
+  RETURN 'ok';
+END $$;
+REVOKE ALL ON FUNCTION platform_tenants_without_owner() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform_assign_first_owner(uuid,uuid,uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform_tenants_without_owner(), platform_assign_first_owner(uuid,uuid,uuid) TO app_platform;
