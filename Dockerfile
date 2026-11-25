@@ -14,7 +14,9 @@ COPY --from=build /app/dist ./dist
 COPY package.json VERSION* ./
 COPY db ./db
 COPY public ./public
-USER node
+COPY scripts/docker-entrypoint.sh /usr/local/bin/tijara-entrypoint
+# The entrypoint gives the media volume to "node", then drops root for good (setpriv, no new privileges).
+ENTRYPOINT ["/usr/local/bin/tijara-entrypoint"]
 EXPOSE 3000
 # The runtime image NEVER runs migrations and never holds admin credentials.
 # Migrations are a separate privileged service (railway.migrate.json -> node dist/migrate.js).

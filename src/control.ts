@@ -8,7 +8,7 @@ import type { Kit, Rc } from './kit.js';
  * The platform side NEVER reads a shop's sales, customers, invoices or stock: only counters already used for quotas,
  * plan/status, owners' contact and the platform audit trail.
  */
-const FEATURES = ['kitchen', 'workshop', 'purchases', 'cash', 'production', 'bookings', 'delivery'] as const;
+const FEATURES = ['kitchen', 'workshop', 'purchases', 'cash', 'production', 'bookings', 'delivery', 'online'] as const;
 const LIMITS = [['users', 'max_users'], ['items', 'max_items'], ['branches', 'max_branches'], ['customers', 'max_customers'], ['monthly_orders', 'max_monthly_orders']] as const;
 const HEX = /^#[0-9a-f]{6}$/;
 const LOGO_MAX = 65536;

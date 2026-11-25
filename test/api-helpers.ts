@@ -8,17 +8,17 @@ import { owner, platform, runtime } from './helpers.js';
 export const PW = 'Correct-Horse-9';
 export interface Res { status: number; json: any; headers: Headers }
 
-export async function startApp(production = false) {
-  const server = http.createServer(createApp({ runtime, platform, production, trustProxy: true, uiRoot: 'public' }));
+export async function startApp(production = false, media?: import('../src/mediastore.js').MediaStore) {
+  const server = http.createServer(createApp({ runtime, platform, production, trustProxy: true, uiRoot: 'public', media }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as any).port}`;
-  const call = async (method: string, path: string, o: { token?: string; body?: unknown; raw?: string; headers?: Record<string, string>; ip?: string } = {}): Promise<Res> => {
+  const call = async (method: string, path: string, o: { token?: string; body?: unknown; raw?: string | Buffer; headers?: Record<string, string>; ip?: string } = {}): Promise<Res> => {
     const headers: Record<string, string> = { 'x-forwarded-for': o.ip ?? `10.${crypto.randomInt(256)}.${crypto.randomInt(256)}.${crypto.randomInt(256)}`, ...o.headers };
     if (o.token) headers.authorization = `Bearer ${o.token}`;
-    let body: string | undefined;
+    let body: string | Buffer | undefined;
     if (o.raw !== undefined) body = o.raw;
     else if (o.body !== undefined) { body = JSON.stringify(o.body); headers['content-type'] ??= 'application/json'; }
-    const r = await fetch(base + path, { method, headers, body });
+    const r = await fetch(base + path, { method, headers, body: body as any });
     const text = await r.text();
     let json: any = null;
     try { json = JSON.parse(text); } catch { /* keep null */ }

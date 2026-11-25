@@ -10,11 +10,11 @@ import { cancelOrder, confirmOrder, createOrder, payOrder, type LineIn } from '.
  * server from item prices); ACCEPTING it creates a normal sales order through the sales engine (stock reserved, kitchen
  * queue, invoice at payment). Prices sent by a client are never used.
  */
-const CHANNELS = ['counter', 'phone', 'whatsapp', 'table', 'web'] as const;
-const MODES = ['pickup', 'dine_in'] as const;             // delivery comes with D4 (zones, fees, couriers)
+export const CHANNELS = ['counter', 'phone', 'whatsapp', 'table', 'web'] as const;
+export const MODES = ['pickup', 'dine_in'] as const;             // delivery comes with D4 (zones, fees, couriers)
 const MAX_LINES = 30;
 const opt = (v: unknown, name: string, max: number) => (v == null || v === '' ? null : str(v, name, max));
-const money = (n: number) => Math.round(n * 100) / 100;
+export const money = (n: number) => Math.round(n * 100) / 100;
 /** An optional list that may be EMPTY (no options, no choice picked); arr() requires at least one element. */
 const list = (v: unknown, name: string, max: number): any[] => {
   if (v == null) return [];
@@ -23,29 +23,87 @@ const list = (v: unknown, name: string, max: number): any[] => {
 };
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'] as const;
 
-type Choice = { id: string; group_id: string; label: string; add_item_id: string | null; qty_mode: 'same' | 'one'; add_price: string | null; add_active: boolean | null };
+type Choice = { id: string; group_id: string; label: string; add_item_id: string | null; qty_mode: 'same' | 'one' | 'fixed'; add_qty: string | null; add_price: string | null; add_active: boolean | null };
 type Group = { id: string; name: string; required: boolean; multiple: boolean; choices: Choice[] };
+
+/** Options of a set of items, grouped (one query). */
+export const loadOptions = async (c: any, itemIds: string[]): Promise<Map<string, Group[]>> => {
+  const rows = (await c.query(
+    `SELECT g.item_id, g.id AS gid, g.name, g.required, g.multiple, g.position AS gp,
+            ch.id, ch.label, ch.add_item_id, ch.qty_mode, ch.add_qty, ch.position AS cp, ai.price AS add_price, ai.active AS add_active
+       FROM item_option_groups g LEFT JOIN item_option_choices ch ON ch.tenant_id=g.tenant_id AND ch.group_id=g.id
+       LEFT JOIN items ai ON ai.tenant_id=ch.tenant_id AND ai.id=ch.add_item_id
+      WHERE g.item_id = ANY($1::uuid[]) ORDER BY g.position, g.name, ch.position, ch.label`, [itemIds])).rows;
+  const out = new Map<string, Group[]>();
+  for (const r of rows) {
+    const groups = out.get(r.item_id) ?? []; out.set(r.item_id, groups);
+    let g = groups.find((x) => x.id === r.gid);
+    if (!g) { g = { id: r.gid, name: r.name, required: r.required, multiple: r.multiple, choices: [] }; groups.push(g); }
+    if (r.id) g.choices.push({ id: r.id, group_id: r.gid, label: r.label, add_item_id: r.add_item_id, qty_mode: r.qty_mode, add_qty: r.add_qty, add_price: r.add_price, add_active: r.add_active });
+  }
+  return out;
+};
+
+
+/** Validate one request line against the product's options and compute its server-side quote. */
+export const priceLine = (item: any, groups: Group[], choiceIds: string[], qty: number, i: number) => {
+  const all = groups.flatMap((g) => g.choices);
+  const picked = choiceIds.map((cid) => { const ch = all.find((x) => x.id === cid); if (!ch) throw bad(`lines[${i}]: this choice does not belong to ${item.name}`); return ch; });
+  if (new Set(choiceIds).size !== choiceIds.length) throw bad(`lines[${i}]: the same choice twice`);
+  for (const g of groups) {
+    const n = picked.filter((ch) => ch.group_id === g.id).length;
+    if (g.required && n === 0) throw bad(`lines[${i}]: choose "${g.name}" for ${item.name}`);
+    if (!g.multiple && n > 1) throw bad(`lines[${i}]: only one choice for "${g.name}"`);
+  }
+  for (const ch of picked) if (ch.add_item_id && !ch.add_active) throw bad(`lines[${i}]: "${ch.label}" is not available any more`);
+  const extra = picked.filter((ch) => ch.add_item_id).map((ch) => ({ itemId: ch.add_item_id!, qty: ch.qty_mode === 'same' ? qty : ch.qty_mode === 'fixed' ? Number(ch.add_qty) : 1, price: Number(ch.add_price) }));
+  const total = money(qty * Number(item.price) + extra.reduce((s, x) => s + money(x.qty * x.price), 0));
+  return { picked, extra, total };
+};
+
+
+export interface RequestIn {
+  branchId: string; channel: typeof CHANNELS[number]; mode: typeof MODES[number]; customerId: string | null; customerName: string | null;
+  customerPhone: string | null; tableLabel: string | null; wantedAt: string | null; note: string | null; toKitchen: boolean;
+  lines: { itemId: string; qty: number; choiceIds: string[]; note: string | null }[];
+}
+export const parseLines = (raw: unknown) => arr(raw, 'lines', MAX_LINES).map((l: any, i: number) => ({
+  itemId: uuid(l.itemId, `lines[${i}].itemId`), qty: num(l.qty, `lines[${i}].qty`, { positive: true }),
+  choiceIds: list(l.choiceIds, `lines[${i}].choiceIds`, 20).map((x: unknown, j: number) => uuid(x, `lines[${i}].choiceIds[${j}]`)),
+  note: opt(l.note, `lines[${i}].note`, 200),
+}));
+/** Server-side quote of request lines: orderable, active, (public) not sold out; options validated; prices from items. */
+export async function quoteLines(c: any, lines: RequestIn['lines'], o: { publicMenu?: boolean } = {}) {
+  const ids = [...new Set(lines.map((l) => l.itemId))];
+  const items = new Map<string, any>((await c.query(`SELECT i.id, i.name, i.price, i.active, i.orderable, i.base_uom, COALESCE(m.sold_out,false) AS sold_out
+      FROM items i LEFT JOIN item_menu m ON m.tenant_id=i.tenant_id AND m.item_id=i.id WHERE i.id = ANY($1::uuid[])`, [ids])).rows.map((r: any) => [r.id, r]));
+  const opts = await loadOptions(c, ids);
+  const priced = lines.map((l, i) => {
+    const item = items.get(l.itemId);
+    if (!item || !item.active || !item.orderable) throw bad(`lines[${i}]: this product cannot be ordered`);
+    if (o.publicMenu && item.sold_out) throw bad(`lines[${i}]: ${item.name} is sold out today`);
+    if (item.base_uom === 'unit' && !Number.isInteger(l.qty)) throw bad(`lines[${i}]: ${item.name} is sold by the unit`);
+    if (l.qty > 100) throw bad(`lines[${i}]: quantity too large`);
+    const p = priceLine(item, opts.get(l.itemId) ?? [], l.choiceIds, l.qty, i);
+    return { ...l, ...p, name: item.name as string, unit: item.base_uom as string };
+  });
+  return { priced, total: money(priced.reduce((s, l) => s + l.total, 0)) };
+}
+/** Store a request (inbox). Never a sale: acceptance does that through the sales engine. */
+export async function insertRequest(cc: any, p: RequestIn, q: Awaited<ReturnType<typeof quoteLines>>, extra: { trackingHash?: string; contactConsent?: boolean } = {}) {
+  const id = (await cc.client.query(`INSERT INTO order_requests (tenant_id,branch_id,channel,mode,customer_id,customer_name,customer_phone,table_label,
+      wanted_at,note,to_kitchen,quote_total,created_by,tracking_hash,contact_consent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+    [cc.tenantId, p.branchId, p.channel, p.mode, p.customerId, p.customerName, p.customerPhone, p.tableLabel, p.wantedAt, p.note, p.toKitchen, q.total,
+      cc.userId ?? null, extra.trackingHash ?? null, extra.contactConsent ?? false])).rows[0].id;
+  let n = 0;
+  for (const l of q.priced) await cc.client.query(`INSERT INTO order_request_lines (tenant_id,request_id,line_no,item_id,qty,choice_ids,choice_labels,note,quote_total)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [cc.tenantId, id, ++n, l.itemId, l.qty, l.choiceIds, l.picked.map((ch: any) => ch.label), l.note, l.total]);
+  await audit(cc.client, cc.tenantId, cc.userId, 'order_request.created', { type: 'order_request', id }, undefined, { channel: p.channel, total: q.total });
+  return id as string;
+}
 
 export function registerOrderRoutes(k: Kit) {
   const { add, authorize, runtime, idemKey } = k;
-
-  /** Options of a set of items, grouped (one query). */
-  const loadOptions = async (c: any, itemIds: string[]): Promise<Map<string, Group[]>> => {
-    const rows = (await c.query(
-      `SELECT g.item_id, g.id AS gid, g.name, g.required, g.multiple, g.position AS gp,
-              ch.id, ch.label, ch.add_item_id, ch.qty_mode, ch.position AS cp, ai.price AS add_price, ai.active AS add_active
-         FROM item_option_groups g LEFT JOIN item_option_choices ch ON ch.tenant_id=g.tenant_id AND ch.group_id=g.id
-         LEFT JOIN items ai ON ai.tenant_id=ch.tenant_id AND ai.id=ch.add_item_id
-        WHERE g.item_id = ANY($1::uuid[]) ORDER BY g.position, g.name, ch.position, ch.label`, [itemIds])).rows;
-    const out = new Map<string, Group[]>();
-    for (const r of rows) {
-      const groups = out.get(r.item_id) ?? []; out.set(r.item_id, groups);
-      let g = groups.find((x) => x.id === r.gid);
-      if (!g) { g = { id: r.gid, name: r.name, required: r.required, multiple: r.multiple, choices: [] }; groups.push(g); }
-      if (r.id) g.choices.push({ id: r.id, group_id: r.gid, label: r.label, add_item_id: r.add_item_id, qty_mode: r.qty_mode, add_price: r.add_price, add_active: r.add_active });
-    }
-    return out;
-  };
 
   // ───────── product options (owner / catalog.manage) ─────────
   add('GET', '/items/:id/options', 'session', async (rc) => {
@@ -64,10 +122,13 @@ export function registerOrderRoutes(k: Kit) {
         id: optUuid(ch.id, `groups[${i}].choices[${j}].id`) ?? null,
         label: str(ch.label, `groups[${i}].choices[${j}].label`, 60),
         addItemId: optUuid(ch.addItemId, `groups[${i}].choices[${j}].addItemId`) ?? null,
-        qtyMode: oneOf(ch.qtyMode ?? 'same', 'qtyMode', ['same', 'one'] as const),
+        qtyMode: oneOf(ch.qtyMode ?? 'same', 'qtyMode', ['same', 'one', 'fixed'] as const),
+        // "fixed": a portion of the added product (e.g. 0.25 kg of kefta in a composed plate)
+        addQty: ch.qtyMode === 'fixed' ? num(ch.addQty, `groups[${i}].choices[${j}].addQty`, { positive: true }) : null,
       })),
     }));
     for (const g of groups) if (g.choices.length === 0) throw bad(`option "${g.name}" needs at least one choice`);
+    for (const g of groups) for (const ch of g.choices) if (ch.qtyMode === 'fixed' && !ch.addItemId) throw bad(`choice "${ch.label}": a portion needs the product it adds`);
     await withTenant(runtime, a.ctx, async (c) => {
       const item = (await c.query('SELECT id FROM items WHERE id=$1', [id])).rows[0];
       if (!item) throw new HttpError(404, 'NOT_FOUND', 'item not found');
@@ -92,10 +153,10 @@ export function registerOrderRoutes(k: Kit) {
         let cp = 0;
         for (const ch of g.choices) {
           if (ch.id && ownChoices.has(ch.id)) {
-            await c.query('UPDATE item_option_choices SET label=$2,add_item_id=$3,qty_mode=$4,position=$5 WHERE id=$1', [ch.id, ch.label, ch.addItemId, ch.qtyMode, cp++]);
+            await c.query('UPDATE item_option_choices SET label=$2,add_item_id=$3,qty_mode=$4,position=$5,add_qty=$6 WHERE id=$1', [ch.id, ch.label, ch.addItemId, ch.qtyMode, cp++, ch.addQty]);
             keptChoices.push(ch.id);
-          } else keptChoices.push((await c.query('INSERT INTO item_option_choices (tenant_id,group_id,label,add_item_id,qty_mode,position) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-            [a.ctx.tenantId, gid, ch.label, ch.addItemId, ch.qtyMode, cp++])).rows[0].id);
+          } else keptChoices.push((await c.query('INSERT INTO item_option_choices (tenant_id,group_id,label,add_item_id,qty_mode,position,add_qty) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+            [a.ctx.tenantId, gid, ch.label, ch.addItemId, ch.qtyMode, cp++, ch.addQty])).rows[0].id);
         }
       }
       await c.query(`DELETE FROM item_option_choices ch USING item_option_groups g
@@ -117,61 +178,26 @@ export function registerOrderRoutes(k: Kit) {
     return { body: { items: out } };
   });
 
-  /** Validate one request line against the product's options and compute its server-side quote. */
-  const priceLine = (item: any, groups: Group[], choiceIds: string[], qty: number, i: number) => {
-    const all = groups.flatMap((g) => g.choices);
-    const picked = choiceIds.map((cid) => { const ch = all.find((x) => x.id === cid); if (!ch) throw bad(`lines[${i}]: this choice does not belong to ${item.name}`); return ch; });
-    if (new Set(choiceIds).size !== choiceIds.length) throw bad(`lines[${i}]: the same choice twice`);
-    for (const g of groups) {
-      const n = picked.filter((ch) => ch.group_id === g.id).length;
-      if (g.required && n === 0) throw bad(`lines[${i}]: choose "${g.name}" for ${item.name}`);
-      if (!g.multiple && n > 1) throw bad(`lines[${i}]: only one choice for "${g.name}"`);
-    }
-    for (const ch of picked) if (ch.add_item_id && !ch.add_active) throw bad(`lines[${i}]: "${ch.label}" is not available any more`);
-    const extra = picked.filter((ch) => ch.add_item_id).map((ch) => ({ itemId: ch.add_item_id!, qty: ch.qty_mode === 'same' ? qty : 1, price: Number(ch.add_price) }));
-    const total = money(qty * Number(item.price) + extra.reduce((s, x) => s + money(x.qty * x.price), 0));
-    return { picked, extra, total };
-  };
-
   // ───────── intake + inbox ─────────
   add('POST', '/order-requests', 'session', async (rc) => {
     const a = await authorize(rc, 'orders.manage'), b = rc.body;
     const branchId = uuid(b.branchId, 'branchId');
     a.assertBranch(branchId);
-    const p = {
+    const p: RequestIn = {
       branchId, channel: oneOf(b.channel ?? 'counter', 'channel', CHANNELS), mode: oneOf(b.mode ?? 'pickup', 'mode', MODES),
       customerId: optUuid(b.customerId, 'customerId') ?? null, customerName: opt(b.customerName, 'customerName', 100),
       customerPhone: opt(b.customerPhone, 'customerPhone', 30), tableLabel: opt(b.tableLabel, 'tableLabel', 30),
       wantedAt: b.wantedAt == null || b.wantedAt === '' ? null : str(b.wantedAt, 'wantedAt', 40), note: opt(b.note, 'note', 300),
       toKitchen: b.toKitchen !== false,
-      lines: arr(b.lines, 'lines', MAX_LINES).map((l: any, i: number) => ({
-        itemId: uuid(l.itemId, `lines[${i}].itemId`), qty: num(l.qty, `lines[${i}].qty`, { positive: true }),
-        choiceIds: list(l.choiceIds, `lines[${i}].choiceIds`, 20).map((x: unknown, j: number) => uuid(x, `lines[${i}].choiceIds[${j}]`)),
-        note: opt(l.note, `lines[${i}].note`, 200),
-      })),
+      lines: parseLines(b.lines),
     };
     if (p.wantedAt && Number.isNaN(Date.parse(p.wantedAt))) throw bad('wantedAt must be a date and time');
     if (p.customerPhone && !/^[+0-9 ().-]{6,30}$/.test(p.customerPhone)) throw bad('customerPhone is not a phone number');
     if (p.mode === 'dine_in' && !p.tableLabel) throw bad('a table is required for dine-in');
     const result = await runCommand(runtime, a.ctx, { key: idemKey(rc), type: 'order_request', payload: p }, async (cc) => {
-      const ids = [...new Set(p.lines.map((l) => l.itemId))];
-      const items = new Map((await cc.client.query('SELECT id, name, price, active, orderable, base_uom FROM items WHERE id = ANY($1::uuid[])', [ids])).rows.map((r: any) => [r.id, r]));
-      const opts = await loadOptions(cc.client, ids);
-      const priced = p.lines.map((l, i) => {
-        const item = items.get(l.itemId);
-        if (!item || !item.active || !item.orderable) throw bad(`lines[${i}]: this product cannot be ordered`);
-        if (item.base_uom === 'unit' && !Number.isInteger(l.qty)) throw bad(`lines[${i}]: ${item.name} is sold by the unit`);
-        return { ...l, ...priceLine(item, opts.get(l.itemId) ?? [], l.choiceIds, l.qty, i) };
-      });
-      const total = money(priced.reduce((s, l) => s + l.total, 0));
-      const id = (await cc.client.query(`INSERT INTO order_requests (tenant_id,branch_id,channel,mode,customer_id,customer_name,customer_phone,table_label,
-          wanted_at,note,to_kitchen,quote_total,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
-        [cc.tenantId, p.branchId, p.channel, p.mode, p.customerId, p.customerName, p.customerPhone, p.tableLabel, p.wantedAt, p.note, p.toKitchen, total, cc.userId ?? null])).rows[0].id;
-      let n = 0;
-      for (const l of priced) await cc.client.query(`INSERT INTO order_request_lines (tenant_id,request_id,line_no,item_id,qty,choice_ids,choice_labels,note,quote_total)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [cc.tenantId, id, ++n, l.itemId, l.qty, l.choiceIds, l.picked.map((ch) => ch.label), l.note, l.total]);
-      await audit(cc.client, cc.tenantId, cc.userId, 'order_request.created', { type: 'order_request', id }, undefined, { channel: p.channel, total });
-      return { id, total };
+      const q = await quoteLines(cc.client, p.lines);
+      const id = await insertRequest(cc, p, q);
+      return { id, total: q.total };
     });
     return { status: 201, body: result };
   });
