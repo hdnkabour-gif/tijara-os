@@ -42,3 +42,10 @@ Independent review on `19bc95e` asked for changes (P1, P1, P2). Fixed in **`ef1f
 - Railway staging: migrator `5df5c2e` SUCCESS (016 applied), app `5df5c2e` deployed; `/ready` → `ready`, `version 5df5c2e`, `pendingMigrations 0`, `unprotectedTables 0`, `rlsBypassPossible false`.
 - `OWNER_RECOVERY` **not set** on staging (recovery disabled) — enabling it needs an explicit owner decision for synthetic pilots only. Production: none; real data still blocked.
 - Next: Issue #19 (integrate `astra/19-shop-modules@81b9095`), then D3.
+
+## Issue #19 — `TIJ-H-20261125-I19` (follows `TIJ-H-20261125-PR23-RELEASE`; scope `TIJ-R02`)
+- Draft [PR #25](https://github.com/hdnkabour-gif/tijara-os/pull/25), head `234c379`, branch `claude/19-shop-modules`. Astra's spec `astra/19-shop-modules@81b9095` cherry-picked (`5b1cdb0`), implemented on top — no second module system.
+- Rule: plan feature/override ∩ shop-enabled module ∩ role ∩ branch; activity = default only. Migration **017** (`tenant_modules`, `orders` feature, defaults, safe backfill, trial ceiling).
+- Also fixed: real shops start with an empty catalog (examples opt-in, refused on production unless `DEMO_CATALOG=on`); branch-scoped invoice list/detail, summary and sale cancellation.
+- Evidence: local 179/179; [CI 45640248946](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45640248946) pg16 ✅ pg18 ✅; mutation checks (module check, branch filter, role gain) each fail the suite.
+- Deliberate test changes: PC2 (trial cannot get add-ons), salesToday as decimal string. Awaiting independent review + owner approval; then D3 (`TIJ-F07`).
