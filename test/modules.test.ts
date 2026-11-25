@@ -12,7 +12,7 @@ const ALLOWED: Record<string, string[]> = {
   grill: ['audit', 'clock', 'commands', 'db', 'http', 'inventory', 'kit', 'sales'],
   workshop: ['audit','clock','commands','db','http','kit','sales'],
   kit: ['auth', 'db', 'mediastore'],
-  control: ['audit', 'db', 'http', 'kit'],
+  control: ['audit', 'auth', 'db', 'http', 'kit'],
   support: ['audit', 'auth', 'db', 'http', 'kit'],
   orders: ['audit', 'commands', 'db', 'http', 'kit', 'sales'],
   menu: ['audit', 'db', 'http', 'kit', 'mediafile', 'mediastore'],

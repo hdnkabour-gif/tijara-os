@@ -193,19 +193,13 @@ describe('team management', () => {
 
   it('AD9: owner in one shop cannot take over a platform-admin or multi-tenant global login', async () => {
     const master = await platformAdmin(api);
-    const ten = await api.call('POST', '/platform/tenants', { ...j(master.token),
-      body: { name: 'Shared account security', slug: uniq('shared').toLowerCase(), plan: 'pro', owner: { self: true } } });
-    expect(ten.status).toBe(201);
-    expect((await api.call('POST', '/auth/switch-tenant', { ...j(master.token), body: { tenantId: ten.json.tenantId } })).status).toBe(200);
-    const otherOwnerEmail = `owner.${uniq('delegate')}@test.local`;
-    const created = await api.call('POST', '/users', { ...j(master.token),
-      body: { email: otherOwnerEmail, name: 'Other Owner', password: PW, roleName: 'owner', branchIds: [] } });
-    expect(created.status).toBe(201);
-    const otherLogin = await api.call('POST', '/auth/login', { body: { email: otherOwnerEmail, password: PW } });
-    expect(otherLogin.status).toBe(200);
-    const blocked = await api.call('POST', `/users/${master.id}/password`, { ...j(otherLogin.json.token), body: { password: 'Hostile-Takeover-1' } });
+    const A = await createShop(api, master);
+    // A membership left by an earlier release must still be protected from tenant password and identity edits.
+    await withTenant(runtime,{tenantId:A.tenantId},c=>c.query(
+      "INSERT INTO memberships(tenant_id,user_id,role_id) SELECT $1,$2,id FROM roles WHERE name='owner'",[A.tenantId,master.id]));
+    const blocked=await api.call('POST',`/users/${master.id}/password`,{token:A.ownerToken,body:{password:'Hostile-Takeover-1'}});
     expect(blocked.status).toBe(403);
-    expect((await api.call('PATCH', `/users/${master.id}`, { ...j(otherLogin.json.token), body: { name: 'Global Name Hijack' } })).status).toBe(403);
+    expect((await api.call('PATCH',`/users/${master.id}`,{token:A.ownerToken,body:{name:'Global Name Hijack'}})).status).toBe(403);
     expect((await api.call('POST', '/auth/login', { body: { email: master.email, password: PW } })).status).toBe(200);
   });
 

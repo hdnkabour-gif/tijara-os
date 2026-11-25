@@ -56,10 +56,8 @@ export async function hasPermission(c: pg.PoolClient, tenantId: string, userId: 
 /** Platform action: a new shop with its first owner, audited in platform_audit. */
 export async function platformCreateShop(
   platform: pg.Pool, runtime: pg.Pool, actorUserId: string,
-  o: { name: string; slug: string; plan: string; activities?: string[]; owner: { existingUserId: string } | { email: string; name: string; passwordHash: string } },
+  o: { name: string; slug: string; plan: string; activities?: string[]; owner: { email: string; name: string; passwordHash: string } },
 ) {
-  // Self-ownership is only allowed for the authenticated platform administrator performing the action.
-  if ('existingUserId' in o.owner && o.owner.existingUserId !== actorUserId) throw new Error('self owner must be the acting administrator');
   const activities = o.activities ?? [];
   const t = await provisionTenant(platform, runtime, { name: o.name, slug: o.slug, plan: o.plan, settings: { activities } });
   await withTenant(runtime, { tenantId: t.tenantId }, async (c) => {            // starter catalog (examples the owner will edit)
@@ -72,9 +70,7 @@ export async function platformCreateShop(
       }
     }
   });
-  const ownerId = 'existingUserId' in o.owner
-    ? o.owner.existingUserId
-    : await createUser(platform, o.owner.email, o.owner.name, o.owner.passwordHash);
+  const ownerId = await createUser(platform, o.owner.email, o.owner.name, o.owner.passwordHash);
   await addMember(runtime, t.tenantId, ownerId, t.roles.owner);
   await platform.query(`INSERT INTO platform_audit (actor_user_id, action, meta) VALUES ($1,'tenant.created',$2)`,
     [actorUserId, JSON.stringify({ tenantId: t.tenantId, slug: o.slug, plan: o.plan })]);

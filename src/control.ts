@@ -1,6 +1,9 @@
 import { audit } from './audit.js';
 import { withTenant } from './db.js';
-import { HttpError, bad, str, uuid } from './http.js';
+import { HttpError, bad, email, str, uuid } from './http.js';
+import { newToken } from './auth.js';
+
+const CLAIM_MINUTES = 60;
 import type { Kit, Rc } from './kit.js';
 
 /**
@@ -20,9 +23,11 @@ const usage = (row: any) => LIMITS.map(([used, max]) => ({ key: used, used: Numb
   pct: row[max] ? Math.round((Number(row[used] ?? 0) / Number(row[max])) * 100) : 0 }));
 
 /** Alerts derived from real data only (no invented numbers). */
-function alertsFor(t: any, now = Date.now()) {
+function alertsFor(t: any, now = Date.now(), noOwner = new Set<string>()) {
   const out: { tenantId: string; shop: string; kind: string; detail: string }[] = [];
   const push = (kind: string, detail: string) => out.push({ tenantId: t.id, shop: t.name, kind, detail });
+  // only a platform account owns this shop: nobody can run it until it gets a real owner
+  if (noOwner.has(t.id)) push('no_owner', '');
   if (t.status === 'suspended') push('suspended', t.status_reason ?? '');
   if (t.status === 'trial_expired') push('trial_expired', String(t.trial_expires_at ?? ''));
   else if (t.plan_id === 'trial' && t.trial_expires_at && new Date(t.trial_expires_at).getTime() - now < 7 * 86400000) push('trial_ending', String(t.trial_expires_at));
@@ -45,6 +50,7 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
   add('GET', '/platform/overview', 'session', async (rc) => {
     platformOnly(rc);
     const tenants = (await platform.query('SELECT * FROM platform_list_tenant_controls()')).rows;
+    const noOwner = new Set<string>((await platform.query('SELECT platform_tenants_without_owner() AS id')).rows.map((r) => r.id));
     const byStatus: Record<string, number> = {}, byPlan: Record<string, number> = {};
     for (const t of tenants) { byStatus[t.status] = (byStatus[t.status] ?? 0) + 1; byPlan[t.plan_id] = (byPlan[t.plan_id] ?? 0) + 1; }
     let pending: number | null = null;
@@ -63,7 +69,7 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
     return { body: {
       shops: tenants.length, byStatus, byPlan,
       users: tenants.reduce((a, t) => a + Number(t.users), 0),
-      alerts: tenants.flatMap((t) => alertsFor(t)),
+      alerts: tenants.flatMap((t) => alertsFor(t, Date.now(), noOwner)),
       health: {
         version: info.version, pendingMigrations: pending, lastMigration,
         backup,                                                     // never | failed | stale (> 26 h) | ok
@@ -80,13 +86,32 @@ export function registerControlRoutes(k: Kit, info: { version: string; expectedM
     const t = (await platform.query('SELECT * FROM platform_list_tenant_controls() WHERE id=$1', [id])).rows[0];
     if (!t) throw new HttpError(404, 'NOT_FOUND', 'shop not found');
     const people = (await platform.query('SELECT platform_tenant_people($1) AS p', [id])).rows[0].p;
+    const noOwner = new Set<string>((await platform.query('SELECT platform_tenants_without_owner() AS id')).rows.map((r) => r.id).filter((x) => x === id));
     const history = (await platform.query('SELECT at, action, actor_name, meta FROM platform_audit_feed($1, 50)', [id])).rows;
     return { body: {
       id: t.id, name: t.name, slug: t.slug, plan: t.plan_id, status: t.status, statusReason: t.status_reason,
       trialExpiresAt: t.trial_expires_at, createdAt: t.created_at, activities: t.activities ?? [],
       usage: usage(t), limitOverrides: t.overrides ?? {}, features: effectiveFeatures(t.features, t.feature_overrides),
-      featureOverrides: t.feature_overrides ?? {}, people, alerts: alertsFor(t), history,
+      featureOverrides: t.feature_overrides ?? {}, people, alerts: alertsFor(t, Date.now(), noOwner), needsOwner: noOwner.has(id), history,
     } };
+  });
+
+  /** Give an old platform-owned pilot ONE real owner (active platform owner AND no active merchant owner, checked in SQL
+   *  under a lock). The platform never chooses or sees the owner's password: the account is created WITHOUT one, with a
+   *  single-use claim link (only its hash is stored) through which the owner sets it. Until a verified channel (e-mail/SMS)
+   *  delivers that link to the merchant directly, this is disabled unless the operator opts in (OWNER_RECOVERY=claim-link,
+   *  staging / synthetic pilots only) - production is blocked by default. */
+  add('POST', '/platform/tenants/:id/first-owner', 'session', async (rc) => {
+    platformOnly(rc);
+    if (process.env.OWNER_RECOVERY !== 'claim-link') throw new HttpError(403, 'RECOVERY_DISABLED', 'owner recovery needs a verified delivery channel; enabled on staging only');
+    const id = uuid(rc.params.id, 'id'), b = rc.body;
+    const emailV = email(b.email), name = str(b.name, 'name', 100);
+    const { token, hash } = newToken();
+    const r = (await platform.query('SELECT * FROM platform_assign_first_owner($1,$2,$3,$4,$5,$6)', [rc.session!.userId, id, emailV, name, hash, CLAIM_MINUTES])).rows[0];
+    if (r.result === 'email_taken') throw new HttpError(409, 'ALREADY_EXISTS', 'this e-mail already has an account');
+    if (r.result !== 'ok') throw new HttpError(409, 'NOT_ELIGIBLE', 'only a shop owned by a platform account alone can receive a first owner');
+    // shown ONCE to the operator for an in-person hand-over; never stored or logged in clear
+    return { status: 201, body: { status: 'ok', claimPath: `/app/#/reset?token=${token}`, expiresInMinutes: CLAIM_MINUTES } };
   });
 
   add('GET', '/platform/audit', 'session', async (rc) => {

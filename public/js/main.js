@@ -7,7 +7,7 @@ import { posView } from './pos.js';
 import { grillView, suppliersView, cashView, transformsView } from './grill-views.js';
 import { vehiclesView, workshopView, workshopRemindersView } from './workshop-views.js';
 import { applyBranding, overviewView, planView, platformAuditView, shop360View, shopsView } from './control-views.js';
-import { supportBanner, supportRequestLabel } from './support-views.js';
+import { supportBanner, supportDiagnostics, supportRequestLabel } from './support-views.js';
 import { ordersView } from './orders-views.js';
 import { menuView } from './menu-views.js';
 
@@ -58,7 +58,7 @@ export const go = (path) => { location.hash = `#/${path}`; };
 
 async function boot() {
   try { S.me = await api('GET', '/me'); } catch { S.me = null; }
-  if (S.me?.activeTenantId) {
+  if (S.me?.activeTenantId && !S.me.isPlatformAdmin) {
     try { S.tenant = await api('GET', '/tenant'); } catch { S.tenant = null; }
     try { S.branches = (await api('GET', '/branches')).branches; } catch { S.branches = []; }
     try { S.branding = await api('GET', '/tenant/branding'); } catch { S.branding = null; }
@@ -89,10 +89,24 @@ async function render() {
   if (path === 'reset') return void root.appendChild(publicShell(resetView(query.get('token') ?? '', () => go('login'))));
   if (path === 'forgot') return void root.appendChild(publicShell(forgotView()));
   if (!S.me) return void root.appendChild(publicShell(loginView(async () => { go(''); await boot(); })));
-  // a platform admin lands in the Control Center; a shop opens only on an explicit shop route (e.g. after choosing it)
-  // a platform admin lands in the Control Center; a shop opens only on an explicit shop route (e.g. after choosing it,
-  // or under an owner-approved support grant)
-  if (S.me.isPlatformAdmin && (path.startsWith('platform') || !S.me.activeTenantId || (path === '' && !S.me.support))) return platformShell(path, query);
+  if (S.me.support) {
+    applyBranding(null);
+    const main = h('main', {id:'main'});
+    const leave = async () => {
+      try { await api('POST','/support/leave'); }
+      catch (e) { toast(friendly(e),true); return; }
+      go('platform'); await boot();
+    };
+    root.appendChild(publicShell(main));
+    main.append(supportBanner(S.me.support,leave));
+    try { main.append(await supportDiagnostics()); }
+    catch (e) {
+      if (e.status === 403) { await boot(); return; }
+      main.append(h('p',{role:'alert'},friendly(e)));
+    }
+    return;
+  }
+  if (S.me.isPlatformAdmin) return platformShell(path,query);
   if (!S.me.activeTenantId && S.me.tenants.length > 1) {
     return void root.appendChild(publicShell(tenantPicker(S.me.tenants, async (id) => {
       try { await api('POST', '/auth/switch-tenant', { tenantId: id }); await boot(); } catch (e) { toast(friendly(e), true); }
@@ -146,10 +160,7 @@ async function render() {
       visible.filter((r) => !r.hidden).map((r) => h('a', { href: `#/${r.path}`, ...(r.path === current.path ? { 'aria-current': 'page' } : {}) }, t(r.label)))),
     main));
   await mount(main, current, query);
-  if (S.me?.support) main.prepend(supportBanner(S.me.support, async () => {
-    try { await api('POST', '/support/leave'); } catch { /* the session may already have lost the shop */ }
-    location.hash = '#/platform'; await boot();
-  }));
+
 }
 
 async function mount(main, route, query) {
@@ -168,7 +179,6 @@ async function platformShell(path, query) {
   let current = PLATFORM_ROUTES.find((r) => r.path === path);
   if (!current) { current = PLATFORM_ROUTES[0]; history.replaceState(null, '', '#/platform'); }
   const navPath = current.path === 'platform-shop' ? 'platform-shops' : current.path;
-  const myShops = S.me.tenants ?? [];
   const main = h('main', { id: 'main' }, h('p', { class: 'muted' }, t('loading')));
   root.appendChild(h('div', { class: 'shell workspace theme-platform' },
     h('div', { class: 'topbar' },
@@ -178,10 +188,6 @@ async function platformShell(path, query) {
           h('strong', { class: 'brand-title' }, 'TIJARA OS'),
           h('span', { class: 'brand-context' }, t('controlCenter')))),
       h('div', { class: 'topbar-actions' },
-        myShops.length > 0 && h('select', { id: 'open-my-shop', 'aria-label': t('myShops'), onchange: async (e) => {
-          if (!e.target.value) return;
-          try { await api('POST', '/auth/switch-tenant', { tenantId: e.target.value }); location.hash = '#/dashboard'; await boot(); } catch (ex) { toast(friendly(ex), true); }
-        } }, h('option', { value: '' }, t('myShops')), myShops.map((m) => h('option', { value: m.tenant_id }, m.name))),
         langToggle(),
         h('button', { type: 'button', onclick: logout }, t('logout')))),
     h('nav', { class: 'nav', 'aria-label': 'navigation' },

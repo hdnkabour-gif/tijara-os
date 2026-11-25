@@ -5,22 +5,22 @@ import { dateFmt, getLang } from './i18n.js';
 const L = {
   fr: {
     title: 'Accès support', ask: 'Demander un accès au commerce', reason: 'Motif (visible par le propriétaire)', duration: 'Durée',
-    scope: 'Étendue', s_view: 'Consultation seulement', s_assist: 'Consultation + réglages et catalogue', send: 'Envoyer la demande',
+    scope: 'Étendue', s_view: 'Diagnostic technique', s_assist: 'Assistance technique (lecture seule)', send: 'Envoyer la demande',
     enter: 'Entrer (mode support)', none: 'Aucune demande', st_requested: 'En attente du propriétaire', st_approved: 'Approuvée',
     st_refused: 'Refusée', st_revoked: 'Révoquée', st_cancelled: 'Annulée', until: 'jusqu’au', expired: 'expirée',
-    platformNote: 'Le propriétaire décide. Sans son accord, aucune donnée du commerce n’est accessible. Chaque action est inscrite dans son journal.',
-    ownerIntro: 'L’équipe TIJARA OS ne voit rien de votre commerce sans votre accord. Vous choisissez la durée et l’étendue, et vous pouvez couper l’accès à tout moment. Tout ce qui est fait apparaît dans le Journal.',
+    platformNote: 'L’accord du propriétaire ouvre le diagnostic de la formule et du statut du commerce. Chaque demande figure dans son journal.',
+    ownerIntro: 'Vous autorisez le support à consulter la formule et le statut technique de votre commerce pour la durée choisie. Vous pouvez révoquer l’accès à tout moment.',
     approve: 'Accepter', refuse: 'Refuser', revoke: 'Couper l’accès maintenant', active: 'Accès en cours', pending: 'Demandes en attente',
     history: 'Historique', by: 'Demandé par', supportTeam: 'Support TIJARA OS', banner: 'Mode support TIJARA OS', leave: 'Quitter le mode support',
     logged: 'chaque action est inscrite dans le journal du commerce', m: 'min', h: 'h', newRequest: 'Demande d’accès support',
   },
   ar: {
     title: 'دخول فريق الدعم', ask: 'طلب الدخول إلى المحل', reason: 'السبب (يراه صاحب المحل)', duration: 'المدة',
-    scope: 'النطاق', s_view: 'اطلاع فقط', s_assist: 'اطلاع + الإعدادات والمنتجات', send: 'إرسال الطلب',
+    scope: 'النطاق', s_view: 'تشخيص تقني', s_assist: 'مساعدة تقنية (للقراءة فقط)', send: 'إرسال الطلب',
     enter: 'الدخول (وضع الدعم)', none: 'لا توجد طلبات', st_requested: 'في انتظار صاحب المحل', st_approved: 'مقبول',
     st_refused: 'مرفوض', st_revoked: 'تم إلغاؤه', st_cancelled: 'ملغى', until: 'حتى', expired: 'انتهت مدته',
-    platformNote: 'صاحب المحل هو من يقرر. بدون موافقته لا يمكن الاطلاع على أي معلومة. كل عملية تُسجَّل في سجله.',
-    ownerIntro: 'فريق TIJARA OS لا يرى أي شيء من محلك بدون موافقتك. أنت تختار المدة والنطاق ويمكنك قطع الدخول في أي وقت. كل ما يتم يظهر في سجل العمليات.',
+    platformNote: 'يوافق صاحب المحل على تشخيص الباقة وحالة المحل. تُسجّل كل عملية في سجل المحل.',
+    ownerIntro: 'تسمح للدعم بالاطلاع على الباقة والحالة التقنية للمحل خلال المدة التي تحددها. يمكنك إلغاء الإذن في أي وقت.',
     approve: 'قبول', refuse: 'رفض', revoke: 'قطع الدخول الآن', active: 'دخول جارٍ', pending: 'طلبات في الانتظار',
     history: 'السجل', by: 'طلبه', supportTeam: 'دعم TIJARA OS', banner: 'وضع دعم TIJARA OS', leave: 'الخروج من وضع الدعم',
     logged: 'كل عملية تُسجَّل في سجل المحل', m: 'د', h: 'س', newRequest: 'طلب دخول فريق الدعم',
@@ -43,7 +43,7 @@ export async function platformSupportSection(tenantId) {
   sec.append(h('h2', null, s('title')), h('p', { class: 'muted' }, s('platformNote')),
     requests.length ? h('ul', { id: 'support-requests' }, requests.map((g) => h('li', null, `${dateFmt(g.created_at)} · ${s(`s_${g.scope}`)} · ${dur(g.minutes)} · ${statusLine(g)} `,
       g.usable && btn(s('enter'), async () => {
-        try { await api('POST', '/platform/support/enter', { tenantId, grantId: g.id }); location.hash = '#/dashboard'; location.reload(); }
+        try { await api('POST', '/platform/support/enter', { tenantId, grantId: g.id }); location.hash = '#/support'; location.reload(); }
         catch (e) { toast(friendly(e), true); }
       }, 'primary', 'enter-support')))) : h('p', { class: 'muted' }, s('none')),
     h('h3', null, s('ask')), ...field(s('reason'), reason, 'sup-reason'),
@@ -86,5 +86,12 @@ export function supportBanner(support, onLeave) {
   return h('div', { class: 'support-banner', role: 'status', id: 'support-banner' },
     h('strong', null, s('banner')), ` · ${s(`s_${support.scope}`)} · ${s('until')} ${dateFmt(support.expiresAt)} · ${s('logged')} `,
     btn(s('leave'), onLeave, '', 'leave-support'));
+}
+export async function supportDiagnostics() {
+  const {plan,status}=await api('GET','/support/diagnostics');
+  const ar=getLang()==='ar';
+  const state=status==='active'?(ar?'نشط':'Actif'):(ar?'موقوف':'Suspendu');
+  return h('section',{class:'card',id:'support-diagnostics'},h('h1',null,s('s_view')),
+    h('p',null,`${ar?'الباقة':'Formule'} · ${plan}`),h('p',null,`${ar?'الحالة':'Statut'} · ${state}`));
 }
 export const supportRequestLabel = () => s('newRequest');
