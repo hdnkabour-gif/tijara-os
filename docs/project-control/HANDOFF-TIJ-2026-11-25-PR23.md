@@ -24,6 +24,14 @@
 - No data migration, no lock-heavy change; function replacements + grants only.
 
 ## Next
-1. **Owner:** final approval to merge the updated PR #23 (head `19bc95e`). After merge: CI on `main`, Railway deploy, `/ready` = merge SHA with 0 pending migrations, check `no_owner` alerts.
+1. **Owner:** final approval to merge the updated PR #23 (head **`ef1fe72`**, see review round 2 below). After merge: CI on `main`, Railway deploy, `/ready` = merge SHA with 0 pending migrations, check `no_owner` alerts.
 2. Then `TIJ-R02` Issue #19: review/integrate `astra/19-shop-modules@81b9095` against the new main (no duplicate module system).
 3. Then `TIJ-F07` D3.
+
+## Review round 2 — `TIJ-H-20261125-PR23-REVIEW` (follows `TIJ-H-20261124-PR23-REBASE`)
+Independent review on `19bc95e` asked for changes (P1, P1, P2). Fixed in **`ef1fe72`**:
+- **Eligibility narrowed** (overview, 360° card and write path share one predicate): active platform-admin owner **AND** no active merchant owner. A shop with no owner at all, or with a merely deactivated merchant owner, is **not** eligible.
+- **No admin-chosen password:** the owner is created without a password; a single-use 60-minute claim link (hash only in DB) lets the owner choose it. Route disabled unless `OWNER_RECOVERY=claim-link` (staging opt-in; production off until a verified e-mail channel exists).
+- **Atomic:** user + membership + claim + audit in one definer function under a per-shop lock; refusals create nothing. Audit records `ownerUserId`.
+- **Evidence:** local 166/166; [CI run 45528247797](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45528247797) pg16 ✅ pg18 ✅; FO1–FO3 + browser E23 (Arabic phone); mutation checks (drop platform-owner requirement → FO2 fails; drop write guard → FO1–FO3 fail). [PR comment](https://github.com/hdnkabour-gif/tijara-os/pull/23#issuecomment-7150007495).
+- **Residual:** the operator sees the claim link while handing it over (single use, TTL, audited); old platform membership kept inert (no deletion).
