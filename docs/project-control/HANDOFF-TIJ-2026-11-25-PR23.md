@@ -35,3 +35,10 @@ Independent review on `19bc95e` asked for changes (P1, P1, P2). Fixed in **`ef1f
 - **Atomic:** user + membership + claim + audit in one definer function under a per-shop lock; refusals create nothing. Audit records `ownerUserId`.
 - **Evidence:** local 166/166; [CI run 45528247797](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45528247797) pg16 ✅ pg18 ✅; FO1–FO3 + browser E23 (Arabic phone); mutation checks (drop platform-owner requirement → FO2 fails; drop write guard → FO1–FO3 fail). [PR comment](https://github.com/hdnkabour-gif/tijara-os/pull/23#issuecomment-7150007495).
 - **Residual:** the operator sees the claim link while handing it over (single use, TTL, audited); old platform membership kept inert (no deletion).
+
+## Release — `TIJ-H-20261125-PR23-RELEASE` (follows `TIJ-H-20261125-PR23-REVIEW`)
+- PR #23 merged by the owner on 2026-11-25 14:42 UTC → `main@5df5c2e`. Independent review approved `ef1fe72` ([comment](https://github.com/hdnkabour-gif/tijara-os/pull/23#issuecomment-7162630157)); the Codex bot review did not run (usage limit), no finding.
+- Main CI [run 45636940355](https://github.com/hdnkabour-gif/tijara-os/actions/runs/45636940355): pg16 ✅ pg18 ✅.
+- Railway staging: migrator `5df5c2e` SUCCESS (016 applied), app `5df5c2e` deployed; `/ready` → `ready`, `version 5df5c2e`, `pendingMigrations 0`, `unprotectedTables 0`, `rlsBypassPossible false`.
+- `OWNER_RECOVERY` **not set** on staging (recovery disabled) — enabling it needs an explicit owner decision for synthetic pilots only. Production: none; real data still blocked.
+- Next: Issue #19 (integrate `astra/19-shop-modules@81b9095`), then D3.
