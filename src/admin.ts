@@ -2,6 +2,7 @@ import { audit } from './audit.js';
 import { withTenant } from './db.js';
 import { checkPasswordPolicy, hashPassword } from './auth.js';
 import { HttpError, bad, num, optNum, optStr, optUuid, str, uuid } from './http.js';
+import { ENTITLEMENT_SQL, MODULES, moduleOf, moduleStates, permAllowed } from './entitlements.js';
 import { ALL_PERMISSIONS, PERMISSION_GROUPS, isPermission } from './permissions.js';
 import type { Kit } from './kit.js';
 
@@ -170,8 +171,10 @@ export function registerAdminRoutes(k: Kit) {
 
   // ───────────── roles & permissions ─────────────
   add('GET', '/permissions', 'session', async (rc) => {
-    await authorize(rc, 'users.manage');
-    return { body: { groups: PERMISSION_GROUPS } };
+    const a = await authorize(rc, 'users.manage');
+    // only what this shop can use: permissions of a module that is off (plan, platform or owner choice) are not offered
+    const groups = PERMISSION_GROUPS.map((g) => ({ ...g, permissions: g.permissions.filter((p) => permAllowed(a.modules, p)) })).filter((g) => g.permissions.length > 0);
+    return { body: { groups } };
   });
   add('GET', '/roles', 'session', async (rc) => {
     const a = await authorize(rc, 'users.manage');
@@ -180,7 +183,7 @@ export function registerAdminRoutes(k: Kit) {
               COALESCE((SELECT array_agg(rp.permission ORDER BY rp.permission) FROM role_permissions rp WHERE rp.role_id=r.id), '{}') AS permissions,
               (SELECT count(*)::int FROM memberships m WHERE m.role_id=r.id AND m.active) AS members
          FROM roles r ORDER BY r.name`))).rows;
-    return { body: { roles: rows.map((r) => ({ ...r, system: SYSTEM_ROLES.includes(r.name) })) } };
+    return { body: { roles: rows.map((r) => ({ ...r, system: SYSTEM_ROLES.includes(r.name), inactive: (r.permissions as string[]).filter((p) => !permAllowed(a.modules, p)) })) } };
   });
   const checkPerms = (a: { permissions: string[]; roleName: string }, v: unknown) => {
     if (!Array.isArray(v) || v.length === 0 || v.length > ALL_PERMISSIONS.length) throw bad('permissions must be a non-empty list');
@@ -190,12 +193,19 @@ export function registerAdminRoutes(k: Kit) {
     if (a.roleName !== 'owner' && perms.some((p) => !a.permissions.includes(p))) throw new HttpError(403, 'FORBIDDEN', 'you cannot grant permissions you do not have');
     return perms;
   };
+  /** A role cannot GAIN a permission of a module that is off; permissions it already has are kept (inactive until the
+   *  module is switched back on), so editing a role never silently strips another module's rights. */
+  const assertModules = (a: { modules: Set<string> }, added: string[]) => {
+    const off = added.find((p) => !permAllowed(a.modules, p));
+    if (off) throw new HttpError(403, 'FEATURE_NOT_IN_PLAN', `module ${moduleOf(off)} is not enabled for this shop`);
+  };
   add('POST', '/roles', 'session', async (rc) => {
     const a = await authorize(rc, 'users.manage');
     if (a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only an owner may manage role definitions');
     const name = str(rc.body.name, 'name', 30).toLowerCase();
     if (!ROLE_NAME.test(name)) throw bad('role name: lowercase letters, digits, underscore (2-30 chars)');
     const perms = checkPerms(a, rc.body.permissions);
+    assertModules(a, perms);
     const id = await withTenant(runtime, a.ctx, async (c) => {
       const id = (await c.query('INSERT INTO roles (tenant_id, name) VALUES ($1,$2) RETURNING id', [a.ctx.tenantId, name])).rows[0].id;
       for (const p of perms) await c.query('INSERT INTO role_permissions (tenant_id, role_id, permission) VALUES ($1,$2,$3)', [a.ctx.tenantId, id, p]);
@@ -220,6 +230,8 @@ export function registerAdminRoutes(k: Kit) {
         await c.query('UPDATE roles SET name=$2 WHERE id=$1', [id, newName]);
       }
       if (perms) {
+        const had = (await c.query('SELECT permission FROM role_permissions WHERE role_id=$1', [id])).rows.map((x) => x.permission as string);
+        assertModules(a, perms.filter((p) => !had.includes(p)));
         await c.query('DELETE FROM role_permissions WHERE role_id=$1', [id]);
         for (const p of perms) await c.query('INSERT INTO role_permissions (tenant_id, role_id, permission) VALUES ($1,$2,$3)', [a.ctx.tenantId, id, p]);
       }
@@ -239,6 +251,38 @@ export function registerAdminRoutes(k: Kit) {
       await audit(c, a.ctx.tenantId, a.ctx.userId, 'role.deleted', { type: 'role', id }, { name: r.name });
     }));
     return { body: { status: 'deleted' } };
+  });
+
+  // ───────────── shop modules (Issue #19): the owner switches modules on/off within what the platform allows ─────────────
+  const loadStates = async (c: any, tenantId: string) => {
+    const r = (await c.query(`SELECT t.settings->'activities' AS activities, ${ENTITLEMENT_SQL} FROM tenants t JOIN plans p ON p.id=t.plan_id
+        LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=$1`, [tenantId])).rows[0];
+    return { activities: (r.activities ?? []) as string[], states: moduleStates(r.plan_features, r.feature_overrides, r.shop_off) };
+  };
+  add('GET', '/tenant/modules', 'session', async (rc) => {
+    const a = await authorize(rc, 'settings.manage');
+    const { activities, states } = await withTenant(runtime, a.ctx, (c) => loadStates(c, a.ctx.tenantId));
+    return { body: { activities, modules: states.map((m) => ({ ...m, activities: MODULES.find((x) => x.id === m.id)!.activities })) } };
+  });
+  add('PATCH', '/tenant/modules/:id', 'session', async (rc) => {
+    const a = await authorize(rc, 'settings.manage');
+    if (a.roleName !== 'owner') throw new HttpError(403, 'FORBIDDEN', 'only the owner chooses the shop modules');
+    const def = MODULES.find((m) => m.id === rc.params.id);
+    if (!def) throw new HttpError(404, 'NOT_FOUND', 'unknown module');
+    if (def.status !== 'available') throw bad('this module is not available yet');
+    if (typeof rc.body.enabled !== 'boolean') throw bad('enabled must be true or false');
+    const enabled: boolean = rc.body.enabled;
+    await withTenant(runtime, a.ctx, async (c) => {
+      const { states } = await loadStates(c, a.ctx.tenantId);
+      const st = states.find((m) => m.id === def.id)!;
+      if (enabled && !st.platformAllowed) throw new HttpError(403, 'FEATURE_NOT_IN_PLAN', 'this module is not included for this shop (plan or platform)');
+      await c.query(`INSERT INTO tenant_modules (tenant_id, module, enabled, updated_by) VALUES ($1,$2,$3,$4)
+        ON CONFLICT (tenant_id, module) DO UPDATE SET enabled=EXCLUDED.enabled, updated_by=EXCLUDED.updated_by, updated_at=now()`,
+        [a.ctx.tenantId, def.id, enabled, a.ctx.userId]);
+      if (st.shopEnabled !== enabled)
+        await audit(c, a.ctx.tenantId, a.ctx.userId, enabled ? 'module.enabled' : 'module.disabled', { type: 'module', id: a.ctx.tenantId }, { enabled: st.shopEnabled }, { module: def.id, enabled });
+    });
+    return { body: { status: 'ok' } };
   });
 
   // ───────────── shop identity (printed on invoices) ─────────────
@@ -272,8 +316,8 @@ export function registerAdminRoutes(k: Kit) {
                 COALESCE(i.display_snapshot->>'customerPhone', cu.phone) AS customer_phone
            FROM invoices i JOIN sales_orders o ON o.tenant_id=i.tenant_id AND o.id=i.order_id
            JOIN branches b ON b.tenant_id=o.tenant_id AND b.id=o.branch_id LEFT JOIN customers cu ON cu.tenant_id=o.tenant_id AND cu.id=o.customer_id
-          WHERE i.id=$1`, [id])).rows[0];
-      if (!inv) throw new HttpError(404, 'NOT_FOUND', 'invoice not found');
+          WHERE i.id=$1 AND (cardinality($2::uuid[])=0 OR o.branch_id=ANY($2::uuid[]))`, [id, a.branchIds])).rows[0];
+      if (!inv) throw new HttpError(404, 'NOT_FOUND', 'invoice not found');                 // another branch's invoice: not found
       const lines = (await c.query(
         `SELECT l.line_no, l.item_sku_at_sale AS sku, l.item_name_at_sale AS name,
                 COALESCE(l.actual_qty, l.ordered_qty) AS qty, l.base_uom_at_sale AS base_uom, l.unit_price, l.line_total

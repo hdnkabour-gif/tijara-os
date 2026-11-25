@@ -56,11 +56,13 @@ export async function hasPermission(c: pg.PoolClient, tenantId: string, userId: 
 /** Platform action: a new shop with its first owner, audited in platform_audit. */
 export async function platformCreateShop(
   platform: pg.Pool, runtime: pg.Pool, actorUserId: string,
-  o: { name: string; slug: string; plan: string; activities?: string[]; owner: { email: string; name: string; passwordHash: string } },
+  o: { name: string; slug: string; plan: string; activities?: string[]; owner: { email: string; name: string; passwordHash: string }; starterCatalog?: boolean },
 ) {
   const activities = o.activities ?? [];
   const t = await provisionTenant(platform, runtime, { name: o.name, slug: o.slug, plan: o.plan, settings: { activities } });
-  await withTenant(runtime, { tenantId: t.tenantId }, async (c) => {            // starter catalog (examples the owner will edit)
+  await withTenant(runtime, { tenantId: t.tenantId }, async (c) => {
+    await c.query('SELECT tenant_apply_module_defaults($1)', [t.tenantId]);      // modules follow the chosen activities
+    if (!o.starterCatalog) return;                                               // examples only for isolated demos
     const seen = new Set<string>();
     for (const a of ACTIVITIES.filter((x) => activities.includes(x.id))) {
       for (const it of a.items) {

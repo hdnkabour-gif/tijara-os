@@ -40,7 +40,7 @@ export function registerGrillRoutes(k: Kit) {
   });
 
   add('POST', '/grill/orders', 'session', async (rc) => {
-    const a = await authorize(rc, 'sale.create'), b = rc.body;
+    const a = await authorize(rc, 'sale.create', { module: 'kitchen' }), b = rc.body;
     const branchId = uuid(b.branchId, 'branchId');
     a.assertBranch(branchId);
     const allowPrice = a.permissions.includes('sale.price_override');
@@ -86,7 +86,7 @@ export function registerGrillRoutes(k: Kit) {
   }
 
   add('POST', '/grill/orders/:id/pay', 'session', async (rc) => {
-    const a = await authorize(rc, 'sale.create'), id = uuid(rc.params.id, 'id');
+    const a = await authorize(rc, 'sale.create', { module: 'kitchen' }), id = uuid(rc.params.id, 'id');
     await branchOrder(a, id);
     const payments = arr(rc.body.payments, 'payments', 5).map((p, i) => ({
       method: oneOf(p.method, `payments[${i}].method`, PAYMENT_METHODS),
@@ -304,7 +304,7 @@ export function registerGrillRoutes(k: Kit) {
     return {status:201,body:result};
   });
   add('GET','/production/transforms','session',async(rc)=>{
-    const a=await authorize(rc,'stock.view'),branchId=uuid(rc.query.get('branchId'),'branchId');
+    const a=await authorize(rc,'stock.view',{module:'production'}),branchId=uuid(rc.query.get('branchId'),'branchId');
     a.assertBranch(branchId);
     const rows=(await withTenant(runtime,a.ctx,(c)=>c.query(
       "SELECT id,branch_id,total_input_cost,created_at FROM production_orders WHERE branch_id=$1 AND type='transform' ORDER BY created_at DESC LIMIT 100",

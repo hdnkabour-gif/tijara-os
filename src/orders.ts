@@ -107,13 +107,13 @@ export function registerOrderRoutes(k: Kit) {
 
   // ───────── product options (owner / catalog.manage) ─────────
   add('GET', '/items/:id/options', 'session', async (rc) => {
-    const a = await authorize(rc, 'catalog.view'), id = uuid(rc.params.id, 'id');
+    const a = await authorize(rc, 'catalog.view', { module: 'orders' }), id = uuid(rc.params.id, 'id');
     const groups = await withTenant(runtime, a.ctx, async (c) => (await loadOptions(c, [id])).get(id) ?? []);
     return { body: { groups } };
   });
   /** Replace the whole option set of a product (simple to edit, nothing half-saved). Past requests keep their labels. */
   add('PUT', '/items/:id/options', 'session', async (rc) => {
-    const a = await authorize(rc, 'catalog.manage'), id = uuid(rc.params.id, 'id');
+    const a = await authorize(rc, 'catalog.manage', { module: 'orders' }), id = uuid(rc.params.id, 'id');
     // groups/choices sent back with their id keep it: pending orders that chose them stay valid
     const groups = list(rc.body.groups, 'groups', 10).map((g: any, i: number) => ({
       id: optUuid(g.id, `groups[${i}].id`) ?? null,
@@ -183,12 +183,14 @@ export function registerOrderRoutes(k: Kit) {
     const a = await authorize(rc, 'orders.manage'), b = rc.body;
     const branchId = uuid(b.branchId, 'branchId');
     a.assertBranch(branchId);
+    // the kitchen is a module: asking for it when the shop has none is refused; by default it follows the shop
+    if (b.toKitchen === true && !a.modules.has('kitchen')) throw new HttpError(403, 'FEATURE_NOT_IN_PLAN', 'this shop has no kitchen module');
     const p: RequestIn = {
       branchId, channel: oneOf(b.channel ?? 'counter', 'channel', CHANNELS), mode: oneOf(b.mode ?? 'pickup', 'mode', MODES),
       customerId: optUuid(b.customerId, 'customerId') ?? null, customerName: opt(b.customerName, 'customerName', 100),
       customerPhone: opt(b.customerPhone, 'customerPhone', 30), tableLabel: opt(b.tableLabel, 'tableLabel', 30),
       wantedAt: b.wantedAt == null || b.wantedAt === '' ? null : str(b.wantedAt, 'wantedAt', 40), note: opt(b.note, 'note', 300),
-      toKitchen: b.toKitchen !== false,
+      toKitchen: b.toKitchen !== false && a.modules.has('kitchen'),
       lines: parseLines(b.lines),
     };
     if (p.wantedAt && Number.isNaN(Date.parse(p.wantedAt))) throw bad('wantedAt must be a date and time');

@@ -36,12 +36,6 @@ export function parseHours(v: unknown): Record<string, [string, string][]> {
 }
 
 /** Is a module enabled for this shop (plan + platform override)? */
-export async function shopHasFeature(c: any, tenantId: string, feature: string) {
-  const r = (await c.query(`SELECT p.features, COALESCE(q.feature_overrides,'{}'::jsonb) AS o FROM tenants t JOIN plans p ON p.id=t.plan_id
-      LEFT JOIN tenant_quotas q ON q.tenant_id=t.id WHERE t.id=$1`, [tenantId])).rows[0];
-  if (!r) return false;
-  return typeof r.o?.[feature] === 'boolean' ? r.o[feature] : Array.isArray(r.features) && r.features.includes(feature);
-}
 
 export function registerMenuRoutes(k: Kit) {
   const { add, authorize, runtime, media } = k;
@@ -49,17 +43,17 @@ export function registerMenuRoutes(k: Kit) {
 
   // ───────── settings ─────────
   add('GET', '/menu/settings', 'session', async (rc) => {
-    const a = await authorize(rc, 'catalog.view');
+    const a = await authorize(rc, 'catalog.view', { module: 'online' });
     const out = await withTenant(runtime, a.ctx, async (c) => ({
       settings: (await c.query('SELECT * FROM shop_menu_settings WHERE tenant_id=$1', [a.ctx.tenantId])).rows[0] ?? null,
       slug: (await c.query('SELECT slug FROM tenants WHERE id=$1', [a.ctx.tenantId])).rows[0].slug,
-      online: await shopHasFeature(c, a.ctx.tenantId, 'online'),
+      online: a.modules.has('online'), orders: a.modules.has('orders'),          // the menu UI hides checkout without 'orders'
       mediaStorage: media.enabled,
     }));
     return { body: out };
   });
   add('PUT', '/menu/settings', 'session', async (rc) => {
-    const a = await authorize(rc, 'settings.manage'), b = rc.body;
+    const a = await authorize(rc, 'settings.manage', { module: 'online' }), b = rc.body;
     const s = {
       published: b.published === true, acceptingOrders: b.acceptingOrders === true,
       pickupEnabled: b.pickupEnabled !== false, dineInEnabled: b.dineInEnabled === true,
@@ -71,8 +65,8 @@ export function registerMenuRoutes(k: Kit) {
     if (s.acceptingOrders && !s.published) throw bad('publish the menu before accepting online orders');
     if (s.acceptingOrders && !s.pickupEnabled && !s.dineInEnabled) throw bad('choose pickup and/or dine-in');
     if (s.acceptingOrders && !Object.values(s.hours).some((r) => r.length)) throw bad('set opening hours before accepting online orders');
+    if (s.acceptingOrders && !a.modules.has('orders')) throw new HttpError(403, 'FEATURE_NOT_IN_PLAN', 'taking orders is switched off for this shop (module orders)');
     await withTenant(runtime, a.ctx, async (c) => {
-      if ((s.published || s.acceptingOrders) && !(await shopHasFeature(c, a.ctx.tenantId, 'online'))) throw new HttpError(403, 'FEATURE_NOT_IN_PLAN', 'online menu is not included in this plan');
       let branch = s.branchId;
       if (!branch) branch = (await c.query('SELECT id FROM branches ORDER BY name LIMIT 1')).rows[0]?.id ?? null;
       else if (!(await c.query('SELECT 1 FROM branches WHERE id=$1', [branch])).rowCount) throw new HttpError(404, 'NOT_FOUND', 'branch not found');
@@ -91,7 +85,7 @@ export function registerMenuRoutes(k: Kit) {
 
   // ───────── dish cards ─────────
   add('GET', '/menu/items', 'session', async (rc) => {
-    const a = await authorize(rc, 'catalog.view');
+    const a = await authorize(rc, 'catalog.view', { module: 'online' });
     const items = (await withTenant(runtime, a.ctx, (c) => c.query(
       `SELECT i.id, i.sku, i.name, i.price, i.base_uom, i.kind, i.active, i.orderable,
               m.category, m.description, m.ingredients, COALESCE(m.allergens,'{}') AS allergens, m.weight_label, m.serves, m.prep_minutes,
@@ -103,7 +97,7 @@ export function registerMenuRoutes(k: Kit) {
     return { body: { items, allergens: ALLERGENS, limits: { images: MAX_IMAGES, videos: MAX_VIDEOS, ...LIMITS } } };
   });
   add('PUT', '/items/:id/menu', 'session', async (rc) => {
-    const a = await authorize(rc, 'catalog.manage'), id = uuid(rc.params.id, 'id'), b = rc.body;
+    const a = await authorize(rc, 'catalog.manage', { module: 'online' }), id = uuid(rc.params.id, 'id'), b = rc.body;
     const allergens = b.allergens == null ? [] : Array.isArray(b.allergens) ? b.allergens.map((x: unknown) => oneOf(x, 'allergens[]', ALLERGENS)) : bad('allergens must be a list');
     const card = {
       category: txt(b.category, 'category', 60), description: txt(b.description, 'description', 600), ingredients: txt(b.ingredients, 'ingredients', 400),
@@ -125,7 +119,7 @@ export function registerMenuRoutes(k: Kit) {
   // ───────── media: upload (raw body), thumbnail, order, alt text, delete, staff preview ─────────
   const store = async (data: Buffer) => { const key = newKey(); await media.put(key, data); return key; };
   add('POST', '/items/:id/media', 'session', async (rc) => {
-    const a = await authorize(rc, 'catalog.manage'), id = uuid(rc.params.id, 'id');
+    const a = await authorize(rc, 'catalog.manage', { module: 'online' }), id = uuid(rc.params.id, 'id');
     needStore();
     const kind = oneOf(rc.query.get('kind') ?? 'image', 'kind', ['image', 'video'] as const);
     let f;
@@ -153,7 +147,7 @@ export function registerMenuRoutes(k: Kit) {
   }, { raw: LIMITS.videoBytes + 1024 });
 
   const ownMedia = async (rc: Rc, perm: string) => {
-    const a = await authorize(rc, perm), id = uuid(rc.params.id, 'id');
+    const a = await authorize(rc, perm, { module: 'online' }), id = uuid(rc.params.id, 'id');
     const m = (await withTenant(runtime, a.ctx, (c) => c.query('SELECT * FROM item_media WHERE id=$1', [id]))).rows[0];
     if (!m) throw new HttpError(404, 'NOT_FOUND', 'media not found');
     return { a, m };
@@ -177,7 +171,7 @@ export function registerMenuRoutes(k: Kit) {
     return { body: { status: 'ok' } };
   });
   add('PUT', '/items/:id/media-order', 'session', async (rc) => {
-    const a = await authorize(rc, 'catalog.manage'), id = uuid(rc.params.id, 'id');
+    const a = await authorize(rc, 'catalog.manage', { module: 'online' }), id = uuid(rc.params.id, 'id');
     const ids = (Array.isArray(rc.body.ids) ? rc.body.ids : bad('ids must be a list')).map((x: unknown) => uuid(x, 'ids[]'));
     await withTenant(runtime, a.ctx, async (c) => {
       const own = (await c.query('SELECT id FROM item_media WHERE item_id=$1', [id])).rows.map((r: any) => r.id).sort();

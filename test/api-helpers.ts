@@ -44,7 +44,7 @@ export interface Shop { tenantId: string; branchId: string; ownerEmail: string; 
 export async function createShop(api: Api, admin: { token: string }, plan = 'pro', name = 'Shop', activities?: string[]): Promise<Shop> {
   const slug = uniq('shop').toLowerCase();
   const ownerEmail = `owner.${slug}@test.local`;
-  const r = await api.call('POST', '/platform/tenants', { token: admin.token, body: { name, slug, plan, activities, owner: { email: ownerEmail, name: `Owner ${slug}`, password: PW } } });
+  const r = await api.call('POST', '/platform/tenants', { token: admin.token, body: { name, slug, plan, activities, starterCatalog: true, owner: { email: ownerEmail, name: `Owner ${slug}`, password: PW } } });
   if (r.status !== 201) throw new Error(`createShop failed: ${r.status} ${JSON.stringify(r.json)}`);
   const l = await api.call('POST', '/auth/login', { body: { email: ownerEmail, password: PW } });
   return { tenantId: r.json.tenantId, branchId: r.json.branchId, ownerEmail, ownerToken: l.json.token, slug };

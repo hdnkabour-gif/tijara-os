@@ -30,7 +30,7 @@ const fr = {
   shopsCount: 'Établissements', platformScope: 'Espace', platformScopeValue: 'Gestion des établissements',
   getStarted: 'Démarrage guidé', platformEmptyTitle: 'Votre premier établissement commence ici',
   platformEmptyDetail: 'Aucun établissement n’est encore créé. Configurez une activité avec des articles de démonstration pour découvrir le fonctionnement, sans utiliser de données réelles.',
-  setupCreate: 'Créer l’établissement', setupActivities: 'Choisir les activités', setupDemo: 'Explorer en mode démo', startFirstShop: 'Créer le premier établissement',
+  setupCreate: 'Créer l’établissement', setupActivities: 'Choisir les activités', setupDemo: 'Explorer en mode démo', starterCatalog: 'Ajouter des produits d’exemple (démo uniquement — un vrai commerce commence vide)', startFirstShop: 'Créer le premier établissement',
   act_butcher: 'Boucherie', act_grill: 'Grillades', act_restaurant: 'Restaurant', act_grocery: 'Alimentation générale', act_equipment: 'Équipements et pièces', act_mechanic: 'Mécanique auto', act_security_systems: 'Alarme et incendie',
 };
 const ar = {
@@ -64,7 +64,7 @@ const ar = {
   shopsCount: 'المؤسسات', platformScope: 'المساحة', platformScopeValue: 'إدارة المؤسسات',
   getStarted: 'بداية موجّهة', platformEmptyTitle: 'ابدأ بإنشاء أول مؤسسة',
   platformEmptyDetail: 'لم تُنشأ أي مؤسسة بعد. اختر النشاط وأنشئ أصنافاً تجريبية لاكتشاف طريقة العمل، دون إدخال بيانات حقيقية.',
-  setupCreate: 'إنشاء المؤسسة', setupActivities: 'اختيار الأنشطة', setupDemo: 'التجربة ببيانات افتراضية', startFirstShop: 'إنشاء المؤسسة الأولى',
+  setupCreate: 'إنشاء المؤسسة', setupActivities: 'اختيار الأنشطة', setupDemo: 'التجربة ببيانات افتراضية', starterCatalog: 'إضافة منتجات تجريبية (للعرض فقط — المحل الحقيقي يبدأ فارغاً)', startFirstShop: 'إنشاء المؤسسة الأولى',
   act_butcher: 'جزارة', act_grill: 'مشوي', act_restaurant: 'مطعم', act_grocery: 'مواد غذائية', act_equipment: 'معدات وقطع غيار', act_mechanic: 'ميكانيكا السيارات', act_security_systems: 'أنظمة الإنذار والحريق',
 };
 

@@ -42,7 +42,11 @@ describe('Platform subscriptions, suspension, and limits',()=>{
     const forbidden=await api.call('GET','/workshop/vehicles',token(A.ownerToken));
     expect(forbidden.status).toBe(403);
     expect(forbidden.json.error.code).toBe('FEATURE_NOT_IN_PLAN');
-    expect((await control(A.tenantId,{features:{workshop:true}})).status).toBe(200);
+    // Issue #19: a trial cannot be given modules beyond its plan (paid plans can receive add-ons, see CC4)
+    const up=await control(A.tenantId,{features:{workshop:true}});
+    expect(up.status).toBe(403); expect(up.json.error.code).toBe('PLAN_UPGRADE_REQUIRED');
+    expect((await api.call('GET','/workshop/vehicles',token(A.ownerToken))).status).toBe(403);
+    expect((await control(A.tenantId,{plan:'pro',features:{workshop:true}})).status).toBe(200);
     expect((await api.call('GET','/workshop/vehicles',token(A.ownerToken))).status).toBe(200);
     expect((await control(A.tenantId,{features:{workshop:false}})).status).toBe(200);
     expect((await api.call('GET','/workshop/vehicles',token(A.ownerToken))).status).toBe(403);

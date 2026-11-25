@@ -95,6 +95,23 @@ describe('web UI in a real browser', () => {
     await mobile.ctx.close();
   });
 
+  it('activity-specific navigation and direct hashes on desktop FR and mobile AR',async()=>{
+    for (const [activity,mobile,visible,hidden] of [['grill',false,'grill','vehicles'],['mechanic',true,'vehicles','grill']] as const) {
+      const shop=await createShop(api,admin,'pro','Navigation '+activity,[activity]);
+      const {ctx,page}=await newPage({mobile,locale:mobile?'ar-MA':'fr-FR'});
+      try {
+        await uiLogin(page,shop.ownerEmail);
+        await page.waitForSelector('#tile-sales');
+        expect(await page.locator('nav a[href="#/'+visible+'"]').count()).toBe(1);
+        expect(await page.locator('nav a[href="#/'+hidden+'"]').count()).toBe(0);
+        await page.goto(base+'/app/#/'+hidden);
+        await page.waitForSelector('#tile-sales');
+        expect(page.url()).not.toMatch(new RegExp('/'+hidden+'$'));
+        if(mobile){expect(await page.locator('html').getAttribute('dir')).toBe('rtl');await fitsPhone(page);}
+      } finally {await ctx.close();}
+    }
+  });
+
   it('E11: kitchen dashboard confirms a real order flow and fits a Moroccan mobile screen in Arabic', async () => {
     const shop=await createShop(api,admin,'pro','Grill Pilot',['butcher','grill']);
     const grillItems=(await api.call('GET','/items',{token:shop.ownerToken})).json.items;
@@ -231,6 +248,8 @@ describe('web UI in a real browser', () => {
     await page.getByRole('button', { name: /Nouvel établissement/ }).click();
     await page.fill('#sn', 'Butcher E2E'); await page.fill('#ss', slug);
     await page.locator('#act-butcher').check(); await page.locator('#act-grill').check();
+    expect(await page.locator('#starter-catalog').isChecked()).toBe(false);              // a real shop starts empty
+    await page.locator('#starter-catalog').check();                                     // this test server is a demo
     const ownerEmail = `owner.${slug}@test.local`;
     expect(await page.locator('#self-owner').count()).toBe(0);
     await page.fill('#on', 'Owner E2E'); await page.fill('#oe', ownerEmail); await page.fill('#op', PW);
@@ -1010,4 +1029,45 @@ describe('web UI in a real browser', () => {
       await own.ctx.close();
     } finally { delete process.env.OWNER_RECOVERY; }
   }, 90_000);
+
+  it('E24: the owner switches the kitchen and the online menu off from Settings on an Arabic phone: the navigation changes at once (AR phone + FR desktop), the data stays', async () => {
+    const shop = await createShop(api, admin, 'pro', 'Grill modules UI', ['grill', 'butcher']);
+    const own = await newPage({ mobile: true, locale: 'ar-MA' });
+    await uiLogin(own.page, shop.ownerEmail);
+    await own.page.waitForSelector('#tile-sales');
+    expect(await own.page.locator('nav a[href="#/grill"]').count()).toBe(1);
+    expect(await own.page.locator('nav a[href="#/vehicles"]').count()).toBe(0);
+    await own.page.goto(`${base}/app/#/settings`);
+    await own.page.locator('#modules-card').waitFor();
+    expect(await own.page.locator('[data-module="workshop"] input').isChecked()).toBe(false);
+    expect(await own.page.locator('[data-module="workshop"] .switch').innerText()).toContain('معطّلة');   // the label says the real state
+    expect(await own.page.locator('[data-module="delivery"] input').count()).toBe(0);         // planned: shown as "soon", not a switch
+    await fitsPhone(own.page); await shot(own.page, 'e24-modules-ar');
+    await own.page.locator('#mod-kitchen').uncheck();
+    await own.page.locator('nav a[href="#/grill"]').waitFor({ state: 'detached' });
+    await own.page.goto(`${base}/app/#/grill`);
+    await own.page.waitForSelector('#tile-sales');                                          // hidden route: back to the dashboard
+    expect(own.page.url()).not.toMatch(/\/grill$/);
+    await own.page.goto(`${base}/app/#/settings`);
+    await own.page.locator('#mod-kitchen').check();
+    await own.page.locator('nav a[href="#/grill"]').waitFor();
+    // the online menu is a module too: switched off, its page leaves the menu (catalog stays)
+    expect(await own.page.locator('nav a[href="#/menu"]').count()).toBe(1);
+    await own.page.locator('#mod-online').uncheck();
+    await own.page.locator('nav a[href="#/menu"]').waitFor({ state: 'detached' });
+    expect(await own.page.locator('nav a[href="#/items"]').count()).toBe(1);
+    await fitsPhone(own.page);
+    expect(own.problems).toEqual([]);
+    await own.ctx.close();
+    // same shop on a French desktop: no menu link, and the direct address falls back to the dashboard
+    const fr = await newPage();
+    await uiLogin(fr.page, shop.ownerEmail);
+    await fr.page.waitForSelector('#tile-sales');
+    expect(await fr.page.locator('nav a[href="#/menu"]').count()).toBe(0);
+    await fr.page.goto(`${base}/app/#/menu`);
+    await fr.page.waitForSelector('#tile-sales');
+    expect(fr.page.url()).not.toMatch(/\/menu$/);
+    expect(fr.problems).toEqual([]);
+    await fr.ctx.close();
+  }, 60_000);
 });

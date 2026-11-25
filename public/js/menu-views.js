@@ -67,12 +67,14 @@ export async function menuView(S) {
   const root = h('div', { id: 'menu-page' });
   const canSettings = S.me.permissions.includes('settings.manage'), canCatalog = S.me.permissions.includes('catalog.manage');
   const render = async () => {
-    const [{ settings, slug, online, mediaStorage }, { items, allergens }] = await Promise.all([api('GET', '/menu/settings'), api('GET', '/menu/items')]);
+    const [{ settings, slug, online, orders, mediaStorage }, { items, allergens }] = await Promise.all([api('GET', '/menu/settings'), api('GET', '/menu/items')]);
     const s = settings ?? { published: false, accepting_orders: false, pickup_enabled: true, dine_in_enabled: false, prep_minutes: 30, slot_minutes: 15, slot_capacity: 5, days_ahead: 2, hours: {}, message: '' };
     const url = `${location.origin}/app/menu.html?s=${encodeURIComponent(slug)}`;
     const f = { published: check('mn-pub', s.published), accepting: check('mn-acc', s.accepting_orders), pickup: check('mn-pick', s.pickup_enabled), dineIn: check('mn-dine', s.dine_in_enabled),
       prep: numIn('mn-prep', s.prep_minutes, { min: '0', max: '1440' }), slot: h('select', { id: 'mn-slot' }, [10, 15, 20, 30, 60].map((n) => h('option', { value: n, selected: n === s.slot_minutes }, String(n)))),
       capacity: numIn('mn-cap', s.slot_capacity, { min: '1', max: '200' }), days: numIn('mn-days', s.days_ahead, { min: '0', max: '14' }), message: h('input', { id: 'mn-msg', value: s.message ?? '', maxlength: '300' }) };
+    // taking orders is its own module: when the owner (or the platform) switched it off, the menu is display-only
+    if (orders === false) { f.accepting.checked = false; f.accepting.disabled = true; }
     // opening hours: up to two ranges a day (e.g. lunch and dinner)
     const hoursRows = [0, 1, 2, 3, 4, 5, 6].map((d) => {
       const ranges = s.hours?.[d] ?? [];
